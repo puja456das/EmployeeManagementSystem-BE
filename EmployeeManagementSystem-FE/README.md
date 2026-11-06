@@ -12,6 +12,25 @@ React, Vite and Tailwind CSS frontend for `EmployeeManagementSystem-BE`.
 Use the backend's provisioned admin credentials to sign in. The frontend stores the
 JWT in browser local storage and sends it as a bearer token to protected API routes.
 
+## Source layout
+
+All frontend source files are under `src/`:
+
+- `App.jsx` maps authenticated admin and employee routes.
+- `pages/admin/` contains separate dashboard, employees, departments, attendance,
+  leaves, payroll, documents, announcements, holidays, profile, and user-access
+  pages for admin/HR accounts.
+- `pages/employee/` contains separate dashboard, attendance, leaves, payslips,
+  documents, announcements, holidays, and profile pages for employee accounts.
+- `pages/shared/` contains the shared login page.
+- `components/` contains reusable interface pieces and shared page implementations.
+  Resource forms and tables live in `ResourceManager.jsx`.
+- `components/` contains reusable interface pieces such as the employee avatar,
+  attendance controls, record form, and status/metric components.
+- `config/` contains navigation and resource field definitions.
+- `utils/formatters.js` contains shared date, currency, and display helpers.
+- `api.js` contains the frontend API client.
+
 Admins and HR users create an employee login along with the employee record. The
 employee receives a one-time email link to choose their own password; no password
 is sent by email. The sign-in page's **Forgot password?** link sends a one-hour,

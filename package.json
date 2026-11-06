@@ -1,0 +1,13 @@
+{
+  "name": "employee-management-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Employee Management System workspace",
+  "scripts": {
+    "dev:backend": "npm --prefix EmployeeManagementSystem-BE run dev",
+    "start:backend": "npm --prefix EmployeeManagementSystem-BE start",
+    "dev:frontend": "npm --prefix EmployeeManagementSystem-FE run dev",
+    "build:frontend": "npm --prefix EmployeeManagementSystem-FE run build"
+  },
+  "license": "ISC"
+}

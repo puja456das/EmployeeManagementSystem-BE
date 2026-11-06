@@ -21,6 +21,17 @@ const register = asyncHandler(async (req, res) => {
     if (password.length < 8) {
         return res.status(400).json({ success: false, message: "Password must contain at least 8 characters" });
     }
+    const existingAccount = await pool.query(
+        `SELECT EXISTS (SELECT 1 FROM users WHERE lower(email) = lower($1))
+             OR EXISTS (SELECT 1 FROM employees WHERE lower(email) = lower($1)) AS already_used`,
+        [email.trim()]
+    );
+    if (existingAccount.rows[0].already_used) {
+        return res.status(409).json({
+            success: false,
+            message: "An account or employee profile already uses this work email. Use the employee setup invitation or contact your system administrator."
+        });
+    }
     const client = await pool.connect();
     let user;
     try {
@@ -56,16 +67,51 @@ const register = asyncHandler(async (req, res) => {
 });
 
 const login = asyncHandler(async (req, res) => {
-    const { email, password } = req.body;
-    if (!email || !password) {
-        return res.status(400).json({ success: false, message: "Email and password are required" });
+    const { email, password, role } = req.body;
+    const identifier = String(email || "").trim();
+    if (!identifier || !password) {
+        return res.status(400).json({ success: false, message: "Email or employee ID and password are required" });
+    }
+    if (role !== undefined && !["admin", "hr", "employee"].includes(role)) {
+        return res.status(400).json({ success: false, message: "Choose a valid workspace" });
     }
     const result = await pool.query(
-        "SELECT id, name, email, role, password_hash FROM users WHERE lower(email) = lower($1)",
-        [email.trim()]
+        `SELECT u.id, u.name, u.email, u.role, u.password_hash
+         FROM users u
+         LEFT JOIN employees e ON e.user_id = u.id
+            OR (u.role = 'employee' AND e.id = u.linked_employee_id)
+         WHERE ($2::text IS NULL OR u.role = $2)
+           AND (lower(u.email) = lower($1)
+            OR (u.role = 'employee' AND lower(e.employee_code) = lower($1)))
+         ORDER BY CASE WHEN lower(u.email) = lower($1) THEN 0 ELSE 1 END, u.id`,
+        [identifier, role || null]
     );
-    const user = result.rows[0];
-    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+    let user = null;
+    for (const candidate of result.rows) {
+        if (await bcrypt.compare(password, candidate.password_hash)) {
+            user = candidate;
+            break;
+        }
+    }
+    if (!user) {
+        if (role && identifier.includes("@")) {
+            const otherRoleResult = await pool.query(
+                `SELECT role, password_hash FROM users
+                 WHERE lower(email) = lower($1) AND role <> $2`,
+                [identifier, role]
+            );
+            for (const candidate of otherRoleResult.rows) {
+                if (await bcrypt.compare(password, candidate.password_hash)) {
+                    const message = role === "hr" && candidate.role === "employee"
+                        ? "This password belongs to the employee portal account, not the HR login. Use the HR account email and password created in User access, or reset the password and choose HR."
+                        : `This email and password belong to the ${candidate.role} workspace. Select ${candidate.role.toUpperCase()} and try again.`;
+                    return res.status(401).json({
+                        success: false,
+                        message
+                    });
+                }
+            }
+        }
         return res.status(401).json({ success: false, message: "Invalid email or password" });
     }
     delete user.password_hash;
@@ -100,13 +146,20 @@ const changePassword = asyncHandler(async (req, res) => {
 
 const requestPasswordReset = asyncHandler(async (req, res) => {
     const email = String(req.body.email || "").trim().toLowerCase();
+    const role = req.body.role;
     if (!email) {
         return res.status(400).json({ success: false, message: "Enter the email address for your account" });
     }
+    if (role !== undefined && !["admin", "hr", "employee"].includes(role)) {
+        return res.status(400).json({ success: false, message: "Choose a valid account type" });
+    }
     const result = await pool.query(
-        "SELECT id, name, email FROM users WHERE lower(email) = $1",
-        [email]
+        "SELECT id, name, email FROM users WHERE lower(email) = $1 AND ($2::text IS NULL OR role = $2)",
+        [email, role || null]
     );
+    if (!role && result.rowCount > 1) {
+        return res.status(400).json({ success: false, message: "Choose the account type to reset its password" });
+    }
 
     if (result.rowCount) {
         const user = result.rows[0];
@@ -166,13 +219,20 @@ const requestPasswordReset = asyncHandler(async (req, res) => {
 const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
     const email = String(req.body.email || "").trim().toLowerCase();
     const code = String(req.body.code || "").trim();
+    const role = req.body.role;
     if (!email || !/^\d{6}$/.test(code)) {
         return res.status(400).json({ success: false, message: "Enter the email address and 6-digit verification code" });
     }
+    if (role !== undefined && !["admin", "hr", "employee"].includes(role)) {
+        return res.status(400).json({ success: false, message: "Choose a valid account type" });
+    }
     const userResult = await pool.query(
-        "SELECT id FROM users WHERE lower(email) = $1",
-        [email]
+        "SELECT id FROM users WHERE lower(email) = $1 AND ($2::text IS NULL OR role = $2)",
+        [email, role || null]
     );
+    if (!role && userResult.rowCount > 1) {
+        return res.status(400).json({ success: false, message: "Choose the account type for this verification code" });
+    }
     if (!userResult.rowCount) {
         return res.status(400).json({ success: false, message: "The verification code is invalid or expired. Request a new code." });
     }
@@ -235,12 +295,16 @@ const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
 const verifyEmployeeInviteOtp = asyncHandler(async (req, res) => {
     const email = String(req.body.email || "").trim().toLowerCase();
     const code = String(req.body.code || "").trim();
+    const role = req.body.role || "employee";
     if (!email || !/^\d{6}$/.test(code)) {
         return res.status(400).json({ success: false, message: "Enter the work email and 6-digit setup code" });
     }
+    if (!["employee", "hr"].includes(role)) {
+        return res.status(400).json({ success: false, message: "Choose a valid account workspace" });
+    }
     const userResult = await pool.query(
-        `SELECT id FROM users WHERE lower(email) = $1 AND role = 'employee'`,
-        [email]
+        "SELECT id, role FROM users WHERE lower(email) = $1 AND role = $2",
+        [email, role]
     );
     if (!userResult.rowCount) {
         return res.status(400).json({ success: false, message: "The setup code is invalid or expired. Contact your administrator." });
@@ -298,7 +362,12 @@ const verifyEmployeeInviteOtp = asyncHandler(async (req, res) => {
     } finally {
         client.release();
     }
-    res.json({ success: true, token: resetToken, message: "Email verified. You can now set your password." });
+    res.json({
+        success: true,
+        token: resetToken,
+        role: userResult.rows[0].role,
+        message: "Email verified. You can now set your password."
+    });
 });
 
 const resetPassword = asyncHandler(async (req, res) => {

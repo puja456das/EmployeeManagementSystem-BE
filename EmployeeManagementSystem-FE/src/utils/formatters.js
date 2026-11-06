@@ -1,4 +1,14 @@
-export const currency = (value) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(value) || 0);
+export const currency = (value) => new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  maximumFractionDigits: 0
+}).format(Number(value) || 0);
+export const compactCurrency = (value) => new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  notation: "compact",
+  maximumFractionDigits: 0
+}).format(Number(value) || 0);
 export const prettify = (value) => String(value ?? "—").replaceAll("_", " ");
 export const dateLabel = (value) => value ? new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
 export const dateTimeLabel = (value) => value ? new Date(value).toLocaleString("en-US", {

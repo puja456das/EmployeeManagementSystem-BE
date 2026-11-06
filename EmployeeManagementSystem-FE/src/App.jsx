@@ -1,16 +1,18 @@
 import { useState } from "react";
-import { employeePages, navItems } from "./config/navigation.js";
+import { adminPages, employeePages, hrPages, navItems } from "./config/navigation.js";
 import AdminAnnouncements from "./pages/admin/Announcements.jsx";
-import AdminAttendance from "./pages/admin/Attendance.jsx";
-import AdminDashboard from "./pages/admin/Dashboard.jsx";
-import AdminDepartments from "./pages/admin/Departments.jsx";
-import AdminDocuments from "./pages/admin/Documents.jsx";
-import AdminEmployees from "./pages/admin/Employees.jsx";
-import AdminHolidays from "./pages/admin/Holidays.jsx";
-import AdminLeaves from "./pages/admin/Leaves.jsx";
-import AdminPayroll from "./pages/admin/Payroll.jsx";
+import AdminDashboard from "./pages/admin/ControlCenter.jsx";
 import AdminProfile from "./pages/admin/Profile.jsx";
 import UserAccess from "./pages/admin/UserAccess.jsx";
+import HrAnnouncements from "./pages/hr/Announcements.jsx";
+import HrAttendance from "./pages/hr/Attendance.jsx";
+import HrDashboard from "./pages/hr/Dashboard.jsx";
+import HrDepartments from "./pages/hr/Departments.jsx";
+import HrDocuments from "./pages/hr/Documents.jsx";
+import HrEmployees from "./pages/hr/Employees.jsx";
+import HrHolidays from "./pages/hr/Holidays.jsx";
+import HrLeaves from "./pages/hr/Leaves.jsx";
+import HrPayroll from "./pages/hr/Payroll.jsx";
 import EmployeeAnnouncements from "./pages/employee/Announcements.jsx";
 import EmployeeAttendance from "./pages/employee/Attendance.jsx";
 import EmployeeDashboard from "./pages/employee/Dashboard.jsx";
@@ -24,16 +26,24 @@ import WorkspaceLayout from "./components/WorkspaceLayout.jsx";
 
 const adminRoutes = {
   dashboard: AdminDashboard,
-  employees: AdminEmployees,
-  departments: AdminDepartments,
-  attendance: AdminAttendance,
-  leaves: AdminLeaves,
-  payroll: AdminPayroll,
-  documents: AdminDocuments,
+  employees: HrEmployees,
+  departments: HrDepartments,
   announcements: AdminAnnouncements,
-  holidays: AdminHolidays,
   profile: AdminProfile,
   users: UserAccess
+};
+
+const hrRoutes = {
+  dashboard: HrDashboard,
+  employees: HrEmployees,
+  departments: HrDepartments,
+  attendance: HrAttendance,
+  leaves: HrLeaves,
+  payroll: HrPayroll,
+  documents: HrDocuments,
+  announcements: HrAnnouncements,
+  holidays: HrHolidays,
+  profile: AdminProfile
 };
 
 const employeeRoutes = {
@@ -51,15 +61,12 @@ export default function App() {
   const [page, setPage] = useState("dashboard");
 
   return <AuthGate>{({ user, logout }) => {
-    const isEmployee = user.role === "employee";
-    const allowedItems = navItems.filter((item) =>
-      (!item.roles || item.roles.includes(user.role)) &&
-      (!isEmployee || employeePages.has(item.id))
-    );
+    const rolePages = user.role === "employee" ? employeePages : user.role === "hr" ? hrPages : adminPages;
+    const allowedItems = navItems.filter((item) => rolePages.has(item.id));
     const active = allowedItems.some((item) => item.id === page) ? page : "dashboard";
-    const routes = isEmployee ? employeeRoutes : adminRoutes;
+    const routes = user.role === "employee" ? employeeRoutes : user.role === "hr" ? hrRoutes : adminRoutes;
     const Page = routes[active];
-    const navigate = (nextPage) => setPage(isEmployee && !employeePages.has(nextPage) ? "dashboard" : nextPage);
+    const navigate = (nextPage) => setPage(rolePages.has(nextPage) ? nextPage : "dashboard");
     const handleLogout = () => {
       setPage("dashboard");
       logout();

@@ -9,5 +9,5 @@ router.get("/", controller.list);
 router.get("/:id", controller.get);
 router.post("/", allowRoles("admin", "hr"), controller.create);
 router.patch("/:id", allowRoles("admin", "hr"), controller.update);
-router.delete("/:id", allowRoles("admin"), controller.remove);
+router.delete("/:id", allowRoles("admin", "hr"), controller.remove);
 module.exports = router;

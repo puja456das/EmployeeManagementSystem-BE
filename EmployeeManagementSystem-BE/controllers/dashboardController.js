@@ -2,8 +2,9 @@ const pool = require("../config/db");
 const asyncHandler = require("../utils/asyncHandler");
 
 const getDashboard = asyncHandler(async (req, res) => {
-    const [employees, departments, pendingLeaves, presentToday, payroll] = await Promise.all([
+    const [employees, totalEmployees, departments, pendingLeaves, presentToday, payroll] = await Promise.all([
         pool.query("SELECT COUNT(*)::int AS count FROM employees WHERE status = 'Active'"),
+        pool.query("SELECT COUNT(*)::int AS count FROM employees"),
         pool.query("SELECT COUNT(*)::int AS count FROM departments"),
         pool.query("SELECT COUNT(*)::int AS count FROM leaves WHERE status = 'pending'"),
         pool.query("SELECT COUNT(*)::int AS count FROM attendance WHERE work_date = CURRENT_DATE"),
@@ -16,6 +17,7 @@ const getDashboard = asyncHandler(async (req, res) => {
         success: true,
         data: {
             activeEmployees: employees.rows[0].count,
+            totalEmployees: totalEmployees.rows[0].count,
             departments: departments.rows[0].count,
             pendingLeaves: pendingLeaves.rows[0].count,
             presentToday: presentToday.rows[0].count,
@@ -62,7 +64,7 @@ const getEmployeeOverview = asyncHandler(async (req, res) => {
                 COUNT(*)::int AS total,
                 COUNT(*) FILTER (WHERE e.status = 'Active')::int AS active
          FROM employees e
-         LEFT JOIN departments d ON lower(d.name) = lower(e.department)
+         LEFT JOIN departments d ON d.id = e.department_id
          GROUP BY COALESCE(d.name, e.department, 'Unassigned')
          ORDER BY department`
     );

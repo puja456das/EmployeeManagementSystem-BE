@@ -15,12 +15,12 @@ const createAdmin = async () => {
     const result = await pool.query(
         `INSERT INTO users (name, email, password_hash, role)
          VALUES ($1, lower($2), $3, 'admin')
-         ON CONFLICT (email) DO NOTHING
+         ON CONFLICT DO NOTHING
          RETURNING id, name, email, role`,
         [ADMIN_NAME.trim(), ADMIN_EMAIL.trim(), passwordHash]
     );
     if (!result.rowCount) {
-        throw new Error("An account already uses ADMIN_EMAIL; no account was changed");
+        throw new Error("A system admin already exists or this email already has an admin account; no account was changed");
     }
     console.log(`Admin account created: ${result.rows[0].email}`);
 };

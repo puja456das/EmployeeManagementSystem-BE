@@ -18,3 +18,12 @@ export const employeePages = new Set([
   "dashboard", "attendance", "leaves", "payroll", "documents",
   "profile", "announcements", "holidays"
 ]);
+
+export const hrPages = new Set([
+  "dashboard", "employees", "departments", "attendance", "leaves",
+  "payroll", "documents", "announcements", "holidays", "profile"
+]);
+
+export const adminPages = new Set([
+  "dashboard", "employees", "departments", "announcements", "profile", "users"
+]);

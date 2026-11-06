@@ -16,17 +16,16 @@ JWT in browser local storage and sends it as a bearer token to protected API rou
 
 All frontend source files are under `src/`:
 
-- `App.jsx` maps authenticated admin and employee routes.
-- `pages/admin/` contains separate dashboard, employees, departments, attendance,
-  leaves, payroll, documents, announcements, holidays, profile, and user-access
-  pages for admin/HR accounts.
+- `App.jsx` maps authenticated admin, HR, and employee routes.
+- `pages/admin/` contains the system control center, employee and department
+  view/create pages, HR-targeted announcements, profile, and user-access pages.
+- `pages/hr/` contains the HR dashboard and daily operations pages for employees,
+  departments, attendance, leaves, payroll, documents, announcements, and holidays.
 - `pages/employee/` contains separate dashboard, attendance, leaves, payslips,
   documents, announcements, holidays, and profile pages for employee accounts.
 - `pages/shared/` contains the shared login page.
-- `components/` contains reusable interface pieces and shared page implementations.
-  Resource forms and tables live in `ResourceManager.jsx`.
 - `components/` contains reusable interface pieces such as the employee avatar,
-  attendance controls, record form, and status/metric components.
+  attendance controls, record dialogs, tables, and status/metric components.
 - `config/` contains navigation and resource field definitions.
 - `utils/formatters.js` contains shared date, currency, and display helpers.
 - `api.js` contains the frontend API client.
@@ -35,6 +34,12 @@ Admins and HR users create an employee login along with the employee record. The
 employee receives a one-time email link to choose their own password; no password
 is sent by email. The sign-in page's **Forgot password?** link sends a one-hour,
 single-use reset link. Configure SMTP in the backend for these emails.
+Employees assigned to the `HR` or `Human Resources` department receive an HR
+workspace login instead of an employee workspace login.
+
+HR accounts sign in using the HR workspace and the password assigned when the
+account was created. Admins can send private announcements to selected HR users;
+those notices are not shown to other HR accounts or employees.
 
 ## Background assets
 

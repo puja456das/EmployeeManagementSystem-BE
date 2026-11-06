@@ -1,6 +1,10 @@
 # Employee Management System API
 
-REST API built with Express and PostgreSQL. The API has authentication and role-based access (`admin`, `hr`, `employee`) for employee, department, attendance, leave, payroll, profile, document, announcement, holiday, and dashboard modules.
+REST API built with Express and PostgreSQL. The API has three role-based access levels (`admin`, `hr`, `employee`): one system admin, multiple HR accounts, and employee accounts. HR handles daily employee, department, attendance, leave, payroll, document, announcement, and holiday operations. An employee created in the `HR` or `Human Resources` department receives an HR login and setup invitation. Admin manages user access, can view/add/delete employees and departments, and can send announcements to selected HR accounts.
+
+Employee profiles reference departments through `department_id`; the migration
+backfills this link from existing department names. Payroll, attendance, leave,
+and document records also reference their related employee or user records.
 
 ## Requirements
 
@@ -22,6 +26,10 @@ REST API built with Express and PostgreSQL. The API has authentication and role-
 3. Create the database, then run `npm run migrate`.
 4. Set `ADMIN_NAME`, `ADMIN_EMAIL`, and a unique `ADMIN_PASSWORD` of at least 12 characters in `.env`, then run `npm run create-admin`.
 5. Start with `npm run dev` or `npm start`.
+
+Run `npm run migrate` after updating to add announcement authors and private HR
+announcement recipients. Existing announcements without recipients remain visible
+to all workspaces.
 
 To send forgot-password verification codes, configure SMTP in the backend `.env`:
 
@@ -62,6 +70,7 @@ The API listens on port `5000` by default. Set `FRONTEND_URL` to the frontend or
 ## Authentication
 
 - `POST /api/auth/login` accepts `{ "email": "...", "password": "..." }`.
+- HR uses the HR account password created in User access and must select the HR workspace at sign-in. It is separate from any linked employee account password.
 - `POST /api/auth/register` creates a basic employee account and profile. It never allows public admin or HR registration.
 - `POST /api/auth/forgot-password` emails a six-digit verification code if the account exists (requires SMTP configuration).
 - `POST /api/auth/verify-reset-otp` accepts `{ "email": "...", "code": "123456" }`; codes expire after 10 minutes and allow at most five attempts.

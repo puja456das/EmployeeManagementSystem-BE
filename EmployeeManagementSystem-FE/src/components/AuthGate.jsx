@@ -3,11 +3,12 @@ import { api } from "../api.js";
 import Login from "../pages/shared/Login.jsx";
 
 export default function AuthGate({ children }) {
+  const isEmployeeSetup = new URLSearchParams(window.location.search).get("setup") === "employee";
   const [user, setUser] = useState(null);
-  const [checking, setChecking] = useState(Boolean(localStorage.getItem("ems-token")));
+  const [checking, setChecking] = useState(Boolean(localStorage.getItem("ems-token")) && !isEmployeeSetup);
 
   useEffect(() => {
-    if (!localStorage.getItem("ems-token")) return;
+    if (isEmployeeSetup || !localStorage.getItem("ems-token")) return;
 
     api("/auth/me")
       .then((result) => setUser(result.user))

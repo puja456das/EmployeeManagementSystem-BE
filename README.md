@@ -5,11 +5,14 @@ Express/PostgreSQL API.
 
 ## Features
 
-- Role-based workspaces for admins, HR users, and employees
+- Three role-based workspaces: one system admin, multiple HR users, and employees
 - Employee profiles, departments, and account management
+- Existing employee profiles are matched by work email and retain their Employee ID when edited
+- Department membership linked with database foreign keys
 - Attendance records, employee check-in/check-out, and summaries
 - Leave requests, approvals, and paid-leave balances
 - Payroll records and employee payslips
+- Indian Rupee (₹) salary and payroll display
 - Documents, announcements, and company holidays
 - Profile photos, password recovery, and encrypted bank-account storage
 
@@ -29,6 +32,19 @@ The backend environment supplies the API port, PostgreSQL connection, admin
 account, JWT signing secret, and bank-details encryption key. Keep the existing
 `BANK_DETAILS_ENCRYPTION_KEY` unchanged: changing or losing it makes previously
 encrypted bank account numbers unreadable.
+
+Employees can sign in with either their work email or Employee ID and the
+password they set up. HR accounts use their own login and HR workspace and can
+be linked to an existing employee profile from **User access**. The system
+admin uses the configured `ADMIN_EMAIL` and has a separate admin workspace.
+Linking the system admin to an employee profile can create an employee-role
+login using that same work email and a separate employee password; the login
+uses the password to select the correct workspace. SMTP must be configured for
+this setup invitation.
+The system admin is created from `ADMIN_NAME`, `ADMIN_EMAIL`, and
+`ADMIN_PASSWORD`; the database allows only one admin. HR accounts can be
+created in **User access** and linked to existing employee profiles, preserving
+their Employee IDs. Multiple HR accounts are supported.
 
 SMTP settings are optional for ordinary use, but required for password recovery
 and employee invitation emails. The frontend's `VITE_API_URL` should point to
@@ -54,6 +70,11 @@ npm --prefix EmployeeManagementSystem-BE run create-admin
 Database migrations create or update the application's tables. Back up
 important database data before changing application versions or rerunning a
 migration.
+
+After updating an existing database, run the migration once to add any
+previously used employee department names to the department list and link
+employee profiles to departments. The migration preserves existing department
+assignments while adding the foreign-key relationship.
 
 The interface includes the admin/HR dashboard, employee and department
 management, attendance, leave requests, payroll, documents, announcements,

@@ -26,17 +26,19 @@ const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => (
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 })[character]);
 
-const sendEmployeeInvite = async (user, employee, code) => {
+const sendEmployeeInvite = async (user, employee, code, role = "employee") => {
     const companyName = getCompanyName();
-    const setupUrl = `${getFrontendUrl()}/?setup=employee&email=${encodeURIComponent(user.email)}`;
+    const accountType = role === "hr" ? "HR" : "employee";
+    const workspace = role === "hr" ? "&workspace=hr" : "";
+    const setupUrl = `${getFrontendUrl()}/?setup=employee&email=${encodeURIComponent(user.email)}${workspace}`;
     const transporter = createMailTransport();
     try {
         await transporter.sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
             to: user.email,
-            subject: `Set up your ${companyName} employee account`,
-            text: `Hello ${user.name},\n\nYour employee account for ${companyName} has been created.\nEmployee name: ${user.name}\nWork email: ${user.email}\nEmployee ID: ${employee.employee_code}\n\nOpen this link to go directly to the employee account setup screen:\n${setupUrl}\n\nEnter the one-time setup code below, then choose your own password:\n${code}\n\nThe code expires in 24 hours and can only be used once. For your security, passwords are never sent by email.`,
-            html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:24px auto;color:#172033"><div style="background:#6258e8;color:#fff;padding:22px 26px;border-radius:16px 16px 0 0"><div style="font-size:12px;opacity:.8">${escapeHtml(companyName)}</div><h1 style="font-size:22px;margin:8px 0 0">Welcome to the team</h1></div><div style="border:1px solid #ececf4;border-top:0;padding:26px;border-radius:0 0 16px 16px"><p>Hello ${escapeHtml(user.name)},</p><p>Your employee account is ready:</p><p><strong>Employee name:</strong> ${escapeHtml(user.name)}<br><strong>Work email:</strong> ${escapeHtml(user.email)}<br><strong>Employee ID:</strong> ${escapeHtml(employee.employee_code)}</p><p>Open the setup page directly and enter your one-time code:</p><p style="margin:26px 0"><a href="${escapeHtml(setupUrl)}" style="background:#6258e8;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:bold">Set up your employee account</a></p><p style="font-size:30px;font-weight:bold;letter-spacing:8px;color:#6258e8">${escapeHtml(code)}</p><p>The code expires in 24 hours and can only be used once. You will create your own password in the app. For your security, passwords are never sent by email.</p></div></div>`
+            subject: `Set up your ${companyName} ${accountType} account`,
+            text: `Hello ${user.name},\n\nYour ${accountType} account for ${companyName} has been created.\nName: ${user.name}\nWork email: ${user.email}\nEmployee ID: ${employee.employee_code}\nWorkspace: ${role === "hr" ? "HR" : "Employee"}\n\nOpen this link to go directly to your account setup screen:\n${setupUrl}\n\nEnter the one-time setup code below, then choose your own password:\n${code}\n\nThe code expires in 24 hours and can only be used once. For your security, passwords are never emailed.`,
+            html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:24px auto;color:#172033"><div style="background:#6258e8;color:#fff;padding:22px 26px;border-radius:16px 16px 0 0"><div style="font-size:12px;opacity:.8">${escapeHtml(companyName)}</div><h1 style="font-size:22px;margin:8px 0 0">Welcome to the team</h1></div><div style="border:1px solid #ececf4;border-top:0;padding:26px;border-radius:0 0 16px 16px"><p>Hello ${escapeHtml(user.name)},</p><p>Your ${escapeHtml(accountType)} account is ready:</p><p><strong>Name:</strong> ${escapeHtml(user.name)}<br><strong>Work email:</strong> ${escapeHtml(user.email)}<br><strong>Employee ID:</strong> ${escapeHtml(employee.employee_code)}<br><strong>Workspace:</strong> ${role === "hr" ? "HR" : "Employee"}</p><p>Open the setup page directly and enter your one-time code:</p><p style="margin:26px 0"><a href="${escapeHtml(setupUrl)}" style="background:#6258e8;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:bold">Set up your ${escapeHtml(accountType)} account</a></p><p style="font-size:30px;font-weight:bold;letter-spacing:8px;color:#6258e8">${escapeHtml(code)}</p><p>The code expires in 24 hours and can only be used once. You will create your own password in the app. For your security, passwords are never emailed.</p></div></div>`
         });
     } catch (cause) {
         console.error("Employee invitation email delivery failed:", cause.message);

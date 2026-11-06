@@ -14,10 +14,12 @@ const validateEmployee = [
         .withMessage("Enter a valid email address")
         .normalizeEmail(),
 
-    body("department")
-        .trim()
-        .notEmpty()
-        .withMessage("Department is required"),
+    body("department").custom((department, { req }) => {
+        if (!String(req.body.department_id || "").trim() && !String(department || "").trim()) {
+            throw new Error("Department is required");
+        }
+        return true;
+    }),
 
     body("salary")
         .notEmpty()

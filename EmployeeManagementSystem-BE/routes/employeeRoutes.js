@@ -18,27 +18,27 @@ const profileImageUpload = require("../middleware/profileImageUpload");
 const authenticate = require("../middleware/authMiddleware");
 const allowRoles = require("../middleware/roleMiddleware");
 
-router.use(authenticate, allowRoles("admin", "hr"));
+router.use(authenticate);
 
 // GET - All Employees
-router.get("/", getEmployees);
+router.get("/", allowRoles("admin", "hr"), getEmployees);
 
 // GET - Employee Profile Photo
-router.get("/:id/photo", getEmployeePhoto);
+router.get("/:id/photo", allowRoles("admin", "hr"), getEmployeePhoto);
 
 // GET - Employee By ID
-router.get("/:id", getEmployeeById);
+router.get("/:id", allowRoles("admin", "hr"), getEmployeeById);
 
 // POST - Add Employee (With Validation)
-router.post("/", profileImageUpload.single("profile_image"), validateEmployee, addEmployee);
+router.post("/", allowRoles("admin", "hr"), profileImageUpload.single("profile_image"), validateEmployee, addEmployee);
 
 // PUT - Full Update Employee (With Validation)
-router.put("/:id", profileImageUpload.single("profile_image"), validateEmployee, updateEmployee);
+router.put("/:id", allowRoles("hr"), profileImageUpload.single("profile_image"), validateEmployee, updateEmployee);
 
 // PATCH - Partial Update Employee
-router.patch("/:id", profileImageUpload.single("profile_image"), patchEmployee);
+router.patch("/:id", allowRoles("hr"), profileImageUpload.single("profile_image"), patchEmployee);
 
 // DELETE - Delete Employee
-router.delete("/:id", deleteEmployee);
+router.delete("/:id", allowRoles("admin", "hr"), deleteEmployee);
 
 module.exports = router;

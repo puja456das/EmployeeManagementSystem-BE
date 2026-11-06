@@ -1,14 +1,16 @@
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 const pool = require("../config/db");
 const asyncHandler = require("../utils/asyncHandler");
+const { sendEmployeeInvite } = require("../utils/email");
 
 const userSelection = `u.id, u.name, u.email, u.role, COALESCE(u.linked_employee_id, e.id) AS linked_employee_id,
     e.employee_code AS linked_employee_code, e.name AS linked_employee_name, u.created_at`;
 
 const getLinkedEmployeeId = (role, value) => {
     if (value === undefined || value === null || value === "") {
-        if (role === "employee") {
-            const error = new Error("Choose the existing employee profile for this employee login");
+        if (role === "employee" || role === "hr") {
+            const error = new Error(`Choose the existing employee profile for this ${role === "hr" ? "HR" : "employee"} login`);
             error.status = 400;
             throw error;
         }
@@ -31,6 +33,84 @@ const ensureEmployeeExists = async (client, employeeId) => {
         error.status = 400;
         throw error;
     }
+};
+
+const ensureEmployeeLogin = async (client, employeeId) => {
+    const employeeResult = await client.query(
+        `SELECT id, user_id, name, email, employee_code
+         FROM employees WHERE id = $1 FOR UPDATE`,
+        [employeeId]
+    );
+    if (!employeeResult.rowCount) {
+        const error = new Error("The selected employee profile does not exist");
+        error.status = 400;
+        throw error;
+    }
+    const employee = employeeResult.rows[0];
+    if (employee.user_id) {
+        const linkedUser = await client.query("SELECT role FROM users WHERE id = $1", [employee.user_id]);
+        if (linkedUser.rows[0]?.role !== "employee") {
+            const error = new Error("This employee profile is linked to a non-employee login");
+            error.status = 409;
+            throw error;
+        }
+        const duplicateLogin = await client.query(
+            `SELECT id FROM users
+             WHERE lower(email) = lower($1) AND role = 'employee' AND id <> $2`,
+            [employee.email, employee.user_id]
+        );
+        if (duplicateLogin.rowCount) {
+            const error = new Error("Another employee login already uses this work email");
+            error.status = 409;
+            throw error;
+        }
+        await client.query(
+            "UPDATE users SET name = $1, email = lower($2) WHERE id = $3",
+            [employee.name, employee.email, employee.user_id]
+        );
+        return false;
+    }
+
+    const existingUser = await client.query(
+        "SELECT id, role FROM users WHERE lower(email) = lower($1) AND role = 'employee'",
+        [employee.email]
+    );
+    if (existingUser.rowCount) {
+        const user = existingUser.rows[0];
+        const linkedProfile = await client.query(
+            "SELECT id FROM employees WHERE user_id = $1 AND id <> $2",
+            [user.id, employeeId]
+        );
+        if (linkedProfile.rowCount) {
+            const error = new Error("The employee work-email login is already linked to another profile");
+            error.status = 409;
+            throw error;
+        }
+        await client.query("UPDATE employees SET user_id = $1 WHERE id = $2", [user.id, employeeId]);
+        return false;
+    }
+
+    const passwordHash = await bcrypt.hash(crypto.randomBytes(48).toString("hex"), 12);
+    const userResult = await client.query(
+        `INSERT INTO users (name, email, password_hash, role)
+         VALUES ($1, lower($2), $3, 'employee')
+         RETURNING id`,
+        [employee.name, employee.email, passwordHash]
+    );
+    const employeeUserId = userResult.rows[0].id;
+    await client.query("UPDATE employees SET user_id = $1 WHERE id = $2", [employeeUserId, employeeId]);
+
+    const code = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
+    const codeHash = crypto.createHmac("sha256", process.env.JWT_SECRET)
+        .update(`${employeeUserId}:${code}`)
+        .digest("hex");
+    await client.query(
+        `INSERT INTO password_reset_otps (user_id, code_hash, purpose, expires_at)
+         VALUES ($1, $2, 'employee_invite', NOW() + INTERVAL '24 hours')`,
+        [employeeUserId, codeHash]
+    );
+    await sendEmployeeInvite({ name: employee.name, email: employee.email }, employee, code);
+    return true;
 };
 
 const listUsers = asyncHandler(async (req, res) => {
@@ -60,7 +140,7 @@ const getUser = asyncHandler(async (req, res) => {
 });
 
 const listRoles = (req, res) => {
-    res.json({ success: true, roles: ["admin", "hr", "employee"] });
+    res.json({ success: true, roles: ["hr", "employee"] });
 };
 
 const createUser = asyncHandler(async (req, res) => {
@@ -68,8 +148,8 @@ const createUser = asyncHandler(async (req, res) => {
     if (!name?.trim() || !email?.trim() || !password) {
         return res.status(400).json({ success: false, message: "Name, email, and password are required" });
     }
-    if (!["admin", "hr", "employee"].includes(role)) {
-        return res.status(400).json({ success: false, message: "Role must be admin, hr, or employee" });
+    if (!["hr", "employee"].includes(role)) {
+        return res.status(400).json({ success: false, message: "Only HR and employee accounts can be created here. The system admin is provisioned from ADMIN_EMAIL." });
     }
     if (password.length < 8) {
         return res.status(400).json({ success: false, message: "Password must contain at least 8 characters" });
@@ -80,12 +160,31 @@ const createUser = asyncHandler(async (req, res) => {
     try {
         await client.query("BEGIN");
         await ensureEmployeeExists(client, linkedEmployeeId);
+        if (role === "employee") {
+            const profile = await client.query(
+                "SELECT email, user_id FROM employees WHERE id = $1 FOR UPDATE",
+                [linkedEmployeeId]
+            );
+            if (profile.rows[0].email.toLowerCase() !== email.trim().toLowerCase()) {
+                const error = new Error("Employee login email must match the selected profile's work email");
+                error.status = 400;
+                throw error;
+            }
+            if (profile.rows[0].user_id) {
+                const error = new Error("This employee profile already has a login account. Edit the existing account instead.");
+                error.status = 409;
+                throw error;
+            }
+        }
         const result = await client.query(
             `INSERT INTO users (name, email, password_hash, role, linked_employee_id)
              VALUES ($1, lower($2), $3, $4, $5)
              RETURNING id, name, email, role, linked_employee_id, created_at`,
             [name.trim(), email.trim(), hash, role, linkedEmployeeId]
         );
+        if (role === "employee") {
+            await client.query("UPDATE employees SET user_id = $1 WHERE id = $2", [result.rows[0].id, linkedEmployeeId]);
+        }
         await client.query("COMMIT");
         res.status(201).json({ success: true, user: result.rows[0] });
     } catch (error) {
@@ -107,6 +206,9 @@ const updateUser = asyncHandler(async (req, res) => {
     if (role !== undefined) {
         const currentUser = await pool.query("SELECT role FROM users WHERE id = $1", [req.params.id]);
         if (!currentUser.rowCount) return res.status(404).json({ success: false, message: "User not found" });
+        if (role === "admin" || currentUser.rows[0].role === "admin") {
+            return res.status(400).json({ success: false, message: "The system admin role can only be provisioned during initial setup" });
+        }
         if ((role === "employee") !== (currentUser.rows[0].role === "employee")) {
             return res.status(400).json({
                 success: false,
@@ -154,8 +256,18 @@ const replaceUser = asyncHandler(async (req, res) => {
     if (String(req.params.id) === String(req.user.id) && role !== "admin") {
         return res.status(400).json({ success: false, message: "You cannot remove your own admin role" });
     }
+    if (role === "admin" && process.env.ADMIN_EMAIL &&
+        email.trim().toLowerCase() !== process.env.ADMIN_EMAIL.trim().toLowerCase()) {
+        return res.status(400).json({ success: false, message: "The system admin login email is managed by ADMIN_EMAIL in the backend environment." });
+    }
     const currentUser = await pool.query("SELECT role FROM users WHERE id = $1", [req.params.id]);
     if (!currentUser.rowCount) return res.status(404).json({ success: false, message: "User not found" });
+    if (currentUser.rows[0].role === "admin" && String(req.params.id) !== String(req.user.id)) {
+        return res.status(403).json({ success: false, message: "The system admin account cannot be changed here" });
+    }
+    if ((role === "admin") !== (currentUser.rows[0].role === "admin")) {
+        return res.status(400).json({ success: false, message: "The system admin role can only be provisioned during initial setup" });
+    }
     if ((role === "employee") !== (currentUser.rows[0].role === "employee")) {
         return res.status(400).json({
             success: false,
@@ -164,6 +276,7 @@ const replaceUser = asyncHandler(async (req, res) => {
     }
     const linkedEmployeeId = getLinkedEmployeeId(role, req.body.employee_id);
     const client = await pool.connect();
+    let employeeLoginCreated = false;
     try {
         await client.query("BEGIN");
         await ensureEmployeeExists(client, linkedEmployeeId);
@@ -184,8 +297,17 @@ const replaceUser = asyncHandler(async (req, res) => {
             await client.query("ROLLBACK");
             return res.status(404).json({ success: false, message: "User not found" });
         }
+        if (role === "admin" && linkedEmployeeId) {
+            employeeLoginCreated = await ensureEmployeeLogin(client, linkedEmployeeId);
+        }
         await client.query("COMMIT");
-        res.json({ success: true, user: result.rows[0] });
+        res.json({
+            success: true,
+            user: result.rows[0],
+            ...(employeeLoginCreated && {
+                message: "System admin profile linked. A separate employee login setup email was sent to the employee work email."
+            })
+        });
     } catch (error) {
         await client.query("ROLLBACK");
         throw error;
@@ -199,11 +321,17 @@ const updateUserRole = asyncHandler(async (req, res) => {
     if (!["admin", "hr", "employee"].includes(role)) {
         return res.status(400).json({ success: false, message: "Role must be admin, hr, or employee" });
     }
+    if (role === "admin") {
+        return res.status(400).json({ success: false, message: "The system admin role can only be provisioned during initial setup" });
+    }
     if (String(req.params.id) === String(req.user.id) && role !== "admin") {
         return res.status(400).json({ success: false, message: "You cannot remove your own admin role" });
     }
     const currentUser = await pool.query("SELECT role FROM users WHERE id = $1", [req.params.id]);
     if (!currentUser.rowCount) return res.status(404).json({ success: false, message: "User not found" });
+    if (currentUser.rows[0].role === "admin") {
+        return res.status(403).json({ success: false, message: "The system admin account cannot be deleted here" });
+    }
     if ((role === "employee") !== (currentUser.rows[0].role === "employee")) {
         return res.status(400).json({
             success: false,

@@ -55,8 +55,10 @@ const getEmployeePayroll = asyncHandler(async (req, res) => {
 const getPayslip = asyncHandler(async (req, res) => {
     const employeeId = req.user.role === "employee" ? await getEmployeeIdForUser(req.user.id) : null;
     const result = await pool.query(
-        `SELECT p.*, e.name AS employee_name, e.employee_code, e.department, e.designation
+        `SELECT p.*, e.name AS employee_name, e.employee_code,
+                COALESCE(d.name, e.department) AS department, e.designation
          FROM payroll p JOIN employees e ON e.id = p.employee_id
+         LEFT JOIN departments d ON d.id = e.department_id
          WHERE p.id = $1 AND ($2 <> 'employee' OR e.id = $3)`,
         [req.params.id, req.user.role, employeeId]
     );

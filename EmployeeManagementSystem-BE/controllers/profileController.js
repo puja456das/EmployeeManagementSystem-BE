@@ -6,7 +6,8 @@ const { getEmployeeIdForUser } = require("../utils/employeeAccount");
 
 const getProfile = asyncHandler(async (req, res) => {
     const result = await pool.query(
-        `SELECT u.id, u.name, u.email, u.role, e.email AS employee_email, e.employee_code, e.department, e.designation,
+        `SELECT u.id, u.name, u.email, u.role, e.email AS employee_email, e.employee_code,
+                COALESCE(d.name, e.department) AS department, e.designation,
                 e.annual_paid_leave_days,
                 e.phone, e.joining_date, e.status, e.address,
                 e.emergency_contact_name, e.emergency_contact_phone, e.bank_account_encrypted,
@@ -16,6 +17,7 @@ const getProfile = asyncHandler(async (req, res) => {
              u.linked_employee_id,
              (SELECT primary_employee.id FROM employees primary_employee WHERE primary_employee.user_id = u.id)
          )
+         LEFT JOIN departments d ON d.id = e.department_id
          WHERE u.id = $1`,
         [req.user.id]
     );

@@ -7,9 +7,45 @@ const { sendEmployeeInvite } = require("../utils/email");
 const { encryptBankAccount, maskBankAccount } = require("../utils/bankDetails");
 const { validateProfileImage } = require("../utils/profileImage");
 
-const employeeSelection = `id, employee_code, user_id, name, email, department, salary, phone, designation,
+const employeeSelection = `id, employee_code, user_id, name, email, department, department_id, salary, phone, designation,
     joining_date, status, created_at, address, emergency_contact_name, emergency_contact_phone, annual_paid_leave_days,
     bank_account_encrypted, profile_image IS NOT NULL AS has_profile_image`;
+
+const isHrDepartment = (name) => ["hr", "human resources", "human resource"]
+    .includes(String(name || "").trim().toLowerCase());
+
+const resolveDepartment = async (client, departmentId, departmentName) => {
+    if (departmentId !== undefined && departmentId !== null && departmentId !== "") {
+        const id = Number(departmentId);
+        if (!Number.isSafeInteger(id) || id < 1) {
+            const error = new Error("Choose a valid department");
+            error.status = 400;
+            throw error;
+        }
+        const result = await client.query("SELECT id, name FROM departments WHERE id = $1", [id]);
+        if (!result.rowCount) {
+            const error = new Error("The selected department does not exist");
+            error.status = 400;
+            throw error;
+        }
+        return result.rows[0];
+    }
+    if (departmentName === undefined || departmentName === null || !String(departmentName).trim()) {
+        return { id: null, name: null };
+    }
+    const result = await client.query(
+        `SELECT id, name FROM departments
+         WHERE lower(trim(name)) = lower(trim($1))
+         ORDER BY id LIMIT 1`,
+        [String(departmentName)]
+    );
+    if (!result.rowCount) {
+        const error = new Error("Choose a department from the department list");
+        error.status = 400;
+        throw error;
+    }
+    return result.rows[0];
+};
 
 const presentEmployee = (employee) => {
     const {
@@ -27,14 +63,30 @@ const presentEmployee = (employee) => {
 
 const getEmployees = asyncHandler(async (req, res) => {
     const result = await pool.query(
-        `SELECT ${employeeSelection} FROM employees ORDER BY id DESC`
+        `SELECT ${employeeSelection},
+                COALESCE((
+                    SELECT linked_user.role
+                    FROM users linked_user
+                    WHERE linked_user.id = e.user_id OR linked_user.linked_employee_id = e.id
+                    ORDER BY CASE WHEN linked_user.role = 'hr' THEN 0 ELSE 1 END
+                    LIMIT 1
+                ), 'employee') AS login_role
+         FROM employees e ORDER BY e.id DESC`
     );
     res.json({ success: true, employees: result.rows.map(presentEmployee) });
 });
 
 const getEmployeeById = asyncHandler(async (req, res) => {
     const result = await pool.query(
-        `SELECT ${employeeSelection} FROM employees WHERE id = $1`,
+        `SELECT ${employeeSelection},
+                COALESCE((
+                    SELECT linked_user.role
+                    FROM users linked_user
+                    WHERE linked_user.id = e.user_id OR linked_user.linked_employee_id = e.id
+                    ORDER BY CASE WHEN linked_user.role = 'hr' THEN 0 ELSE 1 END
+                    LIMIT 1
+                ), 'employee') AS login_role
+         FROM employees e WHERE e.id = $1`,
         [req.params.id]
     );
     if (!result.rowCount) {
@@ -64,31 +116,56 @@ const addEmployee = asyncHandler(async (req, res) => {
     const profileImageMime = validateProfileImage(req.file);
     const client = await pool.connect();
     let employee;
+    let accountRole;
     try {
         await client.query("BEGIN");
+        const existingEmployee = await client.query(
+            "SELECT employee_code FROM employees WHERE lower(email) = lower($1)",
+            [email.trim()]
+        );
+        if (existingEmployee.rowCount) {
+            const error = new Error(
+                `An employee profile already exists with ID ${existingEmployee.rows[0].employee_code}. Edit that profile instead of adding it again.`
+            );
+            error.status = 409;
+            throw error;
+        }
+        const selectedDepartment = await resolveDepartment(client, req.body.department_id, department);
+        if (selectedDepartment.name?.trim().toLowerCase() === "admin") {
+            const error = new Error("Employees cannot be assigned to the Admin department");
+            error.status = 400;
+            throw error;
+        }
+        accountRole = isHrDepartment(selectedDepartment.name) ? "hr" : "employee";
         const passwordHash = await bcrypt.hash(crypto.randomBytes(48).toString("hex"), 12);
         const userResult = await client.query(
             `INSERT INTO users (name, email, password_hash, role)
-             VALUES ($1, lower($2), $3, 'employee')
+             VALUES ($1, lower($2), $3, $4)
              RETURNING id`,
-            [name.trim(), email.trim(), passwordHash]
+            [name.trim(), email.trim(), passwordHash, accountRole]
         );
         const result = await client.query(
             `INSERT INTO employees
-             (employee_code, user_id, name, email, department, salary, phone, designation, joining_date,
+             (employee_code, user_id, name, email, department, department_id, salary, phone, designation, joining_date,
               status, address, emergency_contact_name, emergency_contact_phone, bank_account_encrypted,
               profile_image, profile_image_mime, annual_paid_leave_days)
-             VALUES ($1, $2, $3, lower($4), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+             VALUES ($1, $2, $3, lower($4), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
              RETURNING ${employeeSelection}`,
             [
                 generateEmployeeId(), userResult.rows[0].id, name.trim(), email.trim(),
-                department, salary, phone || null, designation || null, joining_date || null, status || "Active",
+                selectedDepartment.name, selectedDepartment.id, salary, phone || null, designation || null, joining_date || null, status || "Active",
                 address || null, emergency_contact_name || null, emergency_contact_phone || null,
                 encryptBankAccount(bank_account_number), req.file?.buffer || null, profileImageMime,
                 annual_paid_leave_days === undefined ? 12 : Number(annual_paid_leave_days)
             ]
         );
         employee = result.rows[0];
+        if (accountRole === "hr") {
+            await client.query(
+                "UPDATE users SET linked_employee_id = $1 WHERE id = $2",
+                [employee.id, userResult.rows[0].id]
+            );
+        }
         const code = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
         const codeHash = crypto.createHmac("sha256", process.env.JWT_SECRET)
             .update(`${userResult.rows[0].id}:${code}`).digest("hex");
@@ -104,19 +181,42 @@ const addEmployee = asyncHandler(async (req, res) => {
         await sendEmployeeInvite(
             { name: employee.name, email: employee.email },
             employee,
-            code
+            code,
+            accountRole
         );
         await client.query("COMMIT");
     } catch (error) {
         await client.query("ROLLBACK");
+        if (error.code === "23505") {
+            const existingEmployee = await pool.query(
+                "SELECT employee_code FROM employees WHERE lower(email) = lower($1)",
+                [email.trim()]
+            );
+            if (existingEmployee.rowCount) {
+                const duplicateError = new Error(
+                    `An employee profile already exists with ID ${existingEmployee.rows[0].employee_code}. Edit that profile instead of adding it again.`
+                );
+                duplicateError.status = 409;
+                throw duplicateError;
+            }
+            if (error.constraint === "users_email_key" || error.constraint === "users_role_email_key") {
+                const duplicateError = new Error(
+                    "This work email already belongs to a login account. Use a different employee work email."
+                );
+                duplicateError.status = 409;
+                throw duplicateError;
+            }
+        }
         throw error;
     } finally {
         client.release();
     }
     res.status(201).json({
         success: true,
-        message: "Employee account created and setup code emailed to the employee",
-        employee: presentEmployee(employee)
+        message: accountRole === "hr"
+            ? "HR account created and setup code emailed to the HR employee"
+            : "Employee account created and setup code emailed to the employee",
+        employee: { ...presentEmployee(employee), login_role: accountRole }
     });
 });
 
@@ -131,19 +231,20 @@ const updateEmployee = asyncHandler(async (req, res) => {
     let employee;
     try {
         await client.query("BEGIN");
+        const selectedDepartment = await resolveDepartment(client, req.body.department_id, department);
         const result = await client.query(
             `UPDATE employees
-             SET name = $1, email = $2, department = $3, salary = $4, phone = $5,
-                 designation = $6, joining_date = $7, status = $8, address = $9,
-                 emergency_contact_name = $10, emergency_contact_phone = $11,
-                 bank_account_encrypted = COALESCE($12, bank_account_encrypted),
-                 profile_image = COALESCE($13, profile_image),
-                 profile_image_mime = COALESCE($14, profile_image_mime),
-                 annual_paid_leave_days = $15
-             WHERE id = $16
+             SET name = $1, email = $2, department = $3, department_id = $4, salary = $5, phone = $6,
+                 designation = $7, joining_date = $8, status = $9, address = $10,
+                 emergency_contact_name = $11, emergency_contact_phone = $12,
+                 bank_account_encrypted = COALESCE($13, bank_account_encrypted),
+                 profile_image = COALESCE($14, profile_image),
+                 profile_image_mime = COALESCE($15, profile_image_mime),
+                 annual_paid_leave_days = $16
+             WHERE id = $17
              RETURNING ${employeeSelection}`,
             [
-                name.trim(), email.trim().toLowerCase(), department, salary,
+                name.trim(), email.trim().toLowerCase(), selectedDepartment.name, selectedDepartment.id, salary,
                 phone || null, designation || null, joining_date || null, status || "Active",
                 address || null, emergency_contact_name || null, emergency_contact_phone || null,
                 String(bank_account_number || "").trim() ? encryptBankAccount(bank_account_number) : null,
@@ -188,8 +289,9 @@ const patchEmployee = asyncHandler(async (req, res) => {
         "name", "email", "department", "salary", "phone", "designation", "joining_date", "status",
         "address", "emergency_contact_name", "emergency_contact_phone", "annual_paid_leave_days"
     ]);
+    const hasDepartment = Object.hasOwn(req.body || {}, "department") || Object.hasOwn(req.body || {}, "department_id");
     const fields = Object.keys(req.body || {}).filter((field) => allowedFields.has(field));
-    if (!fields.length && !req.file) {
+    if (!fields.length && !req.file && !hasDepartment) {
         return res.status(400).json({ success: false, message: "No valid fields provided for update" });
     }
     const values = fields.map((field) => field === "email"
@@ -205,12 +307,17 @@ const patchEmployee = asyncHandler(async (req, res) => {
         fields.push("profile_image", "profile_image_mime");
         values.push(req.file.buffer, profileImageMime);
     }
-    const assignments = fields.map((field, index) => `${field} = $${index + 1}`).join(", ");
-    values.push(req.params.id);
     const client = await pool.connect();
     let employee;
     try {
         await client.query("BEGIN");
+        if (hasDepartment) {
+            const selectedDepartment = await resolveDepartment(client, req.body.department_id, req.body.department);
+            fields.push("department", "department_id");
+            values.push(selectedDepartment.name, selectedDepartment.id);
+        }
+        const assignments = fields.map((field, index) => `${field} = $${index + 1}`).join(", ");
+        values.push(req.params.id);
         const result = await client.query(
             `UPDATE employees SET ${assignments} WHERE id = $${values.length} RETURNING ${employeeSelection}`,
             values
@@ -245,7 +352,11 @@ const deleteEmployee = asyncHandler(async (req, res) => {
     try {
         await client.query("BEGIN");
         await client.query(
-            "DELETE FROM users WHERE role = 'employee' AND linked_employee_id = $1",
+            `DELETE FROM users
+             WHERE role IN ('employee', 'hr')
+               AND (linked_employee_id = $1 OR id = (
+                   SELECT user_id FROM employees WHERE id = $1
+               ))`,
             [req.params.id]
         );
         const result = await client.query(
@@ -258,7 +369,7 @@ const deleteEmployee = asyncHandler(async (req, res) => {
         }
         if (result.rows[0].user_id) {
             await client.query(
-                "DELETE FROM users WHERE id = $1 AND role = 'employee'",
+                "DELETE FROM users WHERE id = $1 AND role IN ('employee', 'hr')",
                 [result.rows[0].user_id]
             );
         }

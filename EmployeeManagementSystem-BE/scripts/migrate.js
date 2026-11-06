@@ -9,13 +9,17 @@ const migrate = async () => {
             CREATE TABLE IF NOT EXISTS users (
                 id BIGSERIAL PRIMARY KEY,
                 name VARCHAR(150) NOT NULL,
-                email VARCHAR(255) NOT NULL UNIQUE,
+                email VARCHAR(255) NOT NULL,
                 password_hash TEXT NOT NULL,
                 role VARCHAR(20) NOT NULL DEFAULT 'employee'
                     CHECK (role IN ('admin', 'hr', 'employee')),
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
+
+            ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;
+            CREATE UNIQUE INDEX IF NOT EXISTS users_role_email_key ON users (lower(email), role);
+            CREATE UNIQUE INDEX IF NOT EXISTS users_single_admin_key ON users (role) WHERE role = 'admin';
 
             CREATE TABLE IF NOT EXISTS departments (
                 id BIGSERIAL PRIMARY KEY,
@@ -32,6 +36,7 @@ const migrate = async () => {
                 name VARCHAR(150) NOT NULL,
                 email VARCHAR(255) NOT NULL UNIQUE,
                 department VARCHAR(150),
+                department_id BIGINT REFERENCES departments(id),
                 salary NUMERIC(12, 2) CHECK (salary IS NULL OR salary >= 0),
                 phone VARCHAR(40),
                 designation VARCHAR(150),
@@ -42,6 +47,7 @@ const migrate = async () => {
 
             ALTER TABLE employees ADD COLUMN IF NOT EXISTS employee_code VARCHAR(40);
             ALTER TABLE employees ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
+            ALTER TABLE employees ADD COLUMN IF NOT EXISTS department_id BIGINT REFERENCES departments(id);
             ALTER TABLE employees ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
             ALTER TABLE employees ADD COLUMN IF NOT EXISTS address TEXT;
             ALTER TABLE employees ADD COLUMN IF NOT EXISTS emergency_contact_name VARCHAR(150);
@@ -68,6 +74,33 @@ const migrate = async () => {
                   SELECT 1 FROM employees linked WHERE linked.user_id = u.id
               );
             CREATE INDEX IF NOT EXISTS employees_department_idx ON employees(department);
+            INSERT INTO departments (name)
+            SELECT DISTINCT trim(e.department)
+            FROM employees e
+            WHERE e.department IS NOT NULL
+              AND trim(e.department) <> ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM departments d
+                  WHERE lower(trim(d.name)) = lower(trim(e.department))
+              )
+            ON CONFLICT (name) DO NOTHING;
+            UPDATE employees e
+            SET department_id = (
+                SELECT d.id
+                FROM departments d
+                WHERE lower(trim(d.name)) = lower(trim(e.department))
+                ORDER BY d.id
+                LIMIT 1
+            )
+            WHERE e.department_id IS NULL
+              AND e.department IS NOT NULL
+              AND trim(e.department) <> '';
+            UPDATE employees e
+            SET department = d.name
+            FROM departments d
+            WHERE d.id = e.department_id
+              AND e.department IS DISTINCT FROM d.name;
+            CREATE INDEX IF NOT EXISTS employees_department_id_idx ON employees(department_id);
 
             CREATE TABLE IF NOT EXISTS attendance (
                 id BIGSERIAL PRIMARY KEY,
@@ -115,6 +148,13 @@ const migrate = async () => {
                 published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 expires_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            ALTER TABLE announcements
+                ADD COLUMN IF NOT EXISTS created_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
+            CREATE TABLE IF NOT EXISTS announcement_recipients (
+                announcement_id BIGINT NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                PRIMARY KEY (announcement_id, user_id)
             );
 
             CREATE TABLE IF NOT EXISTS holidays (

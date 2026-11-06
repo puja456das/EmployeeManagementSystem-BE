@@ -4,10 +4,14 @@
   "private": true,
   "description": "Employee Management System workspace",
   "scripts": {
+    "dev": "concurrently -k -n backend,frontend \"npm:dev:backend\" \"npm:dev:frontend\"",
     "dev:backend": "npm --prefix EmployeeManagementSystem-BE run dev",
     "start:backend": "npm --prefix EmployeeManagementSystem-BE start",
     "dev:frontend": "npm --prefix EmployeeManagementSystem-FE run dev",
     "build:frontend": "npm --prefix EmployeeManagementSystem-FE run build"
   },
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
 }

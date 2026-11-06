@@ -44,6 +44,7 @@ account already exists.
 Run each command from the workspace root:
 
 ```powershell
+npm install
 npm --prefix EmployeeManagementSystem-BE install
 npm --prefix EmployeeManagementSystem-FE install
 npm --prefix EmployeeManagementSystem-BE run migrate
@@ -63,26 +64,18 @@ corresponding protected modules.
 
 ## Start the application
 
-Open two terminals in the workspace root and leave both running.
-
-**Terminal 1 — backend API**
+Start the backend API and frontend together from the workspace root:
 
 ```powershell
-npm run dev:backend
+npm run dev
 ```
 
-The API listens on the port set by the backend `.env` (default `5000`).
-`http://localhost:5000/` lists the API modules and
-`http://localhost:5000/api/test-db` checks the database connection.
-
-**Terminal 2 — frontend**
-
-```powershell
-npm run dev:frontend
-```
-
-Open the Vite URL printed in the terminal (normally `http://localhost:5173`)
-and sign in with the admin account configured in the backend `.env`.
+The terminal shows both processes. Open the Vite URL it prints (normally
+`http://localhost:5173`) and sign in with the admin account configured in the
+backend `.env`. Press `Ctrl+C` to stop both processes. The API listens on the
+port set by the backend `.env` (default `5000`); `http://localhost:5000/` lists
+the API modules and `http://localhost:5000/api/test-db` checks the database
+connection.
 
 ## Production checks
 

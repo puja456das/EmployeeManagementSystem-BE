@@ -37,7 +37,7 @@ export default function WorkspaceLayout({ user, active, allowedItems, onNavigate
           <button className="mt-3 text-[10px] font-bold underline decoration-white/50 underline-offset-4">Explore help center</button>
         </div>
         <div className="border-t border-slate-100 px-3 py-3">
-          <button onClick={logout} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-semibold ${isEmployee ? "text-indigo-100/70 hover:bg-rose-400/10 hover:text-rose-200" : "text-slate-500 hover:bg-rose-50 hover:text-rose-600"}`}><LogOut size={17} />Sign out</button>
+          <button onClick={onLogout} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-semibold ${isEmployee ? "text-indigo-100/70 hover:bg-rose-400/10 hover:text-rose-200" : "text-slate-500 hover:bg-rose-50 hover:text-rose-600"}`}><LogOut size={17} />Sign out</button>
         </div>
       </aside>
 

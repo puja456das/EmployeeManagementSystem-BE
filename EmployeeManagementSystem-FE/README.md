@@ -36,6 +36,11 @@ is sent by email. The sign-in page's **Forgot password?** link sends a one-hour,
 single-use reset link. Configure SMTP in the backend for these emails.
 Employees assigned to the `HR` or `Human Resources` department receive an HR
 workspace login instead of an employee workspace login.
+Both HR and employee attendance pages provide check-in/check-out controls and
+attendance history filters for a year, month, or specific date. Calendar days
+without check-in or check-out are shown as absent from the employee's joining date.
+The HR and employee Holidays pages also display company holidays in a navigable
+monthly calendar.
 
 HR accounts sign in using the HR workspace and the password assigned when the
 account was created. Admins can send private announcements to selected HR users;

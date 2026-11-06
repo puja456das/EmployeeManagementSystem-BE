@@ -3,9 +3,94 @@ const asyncHandler = require("../utils/asyncHandler");
 const { getEmployeeIdForUser } = require("../utils/employeeAccount");
 
 const findEmployeeId = async (req) => {
-    if (req.user.role !== "employee") return Number(req.body.employee_id);
-    return getEmployeeIdForUser(req.user.id);
+    if (req.user.role === "hr" || req.user.role === "employee") {
+        return getEmployeeIdForUser(req.user.id);
+    }
+    return Number(req.body.employee_id);
 };
+
+const parseAttendancePeriod = (query) => {
+    const year = query.year === undefined ? new Date().getFullYear() : Number(query.year);
+    const month = query.month === undefined || query.month === "" ? null : Number(query.month);
+    const date = query.date || null;
+    const parsedDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date)
+        ? new Date(`${date}T00:00:00Z`)
+        : null;
+    if (!Number.isInteger(year) || year < 1900 || year > 9999) {
+        return { error: "Choose a valid attendance year" };
+    }
+    if (month !== null && (!Number.isInteger(month) || month < 1 || month > 12)) {
+        return { error: "Choose a valid attendance month" };
+    }
+    if (date && (!parsedDate || !Number.isFinite(parsedDate.getTime()) ||
+        parsedDate.toISOString().slice(0, 10) !== date)) {
+        return { error: "Choose a valid attendance date" };
+    }
+    return { year, month, date };
+};
+
+const listMyAttendance = asyncHandler(async (req, res) => {
+    const employeeId = await getEmployeeIdForUser(req.user.id);
+    if (!employeeId) {
+        return res.status(404).json({ success: false, message: "No employee profile is linked to this account" });
+    }
+    const period = parseAttendancePeriod(req.query);
+    if (period.error) {
+        return res.status(400).json({ success: false, message: period.error });
+    }
+    const result = await pool.query(
+        `WITH bounds AS (
+             SELECT CASE
+                        WHEN $2::date IS NOT NULL THEN $2::date
+                        WHEN $4::int IS NOT NULL THEN make_date($3::int, $4::int, 1)
+                        ELSE make_date($3::int, 1, 1)
+                    END AS start_date,
+                    CASE
+                        WHEN $2::date IS NOT NULL THEN $2::date
+                        WHEN $4::int IS NOT NULL
+                            THEN (make_date($3::int, $4::int, 1) + INTERVAL '1 month - 1 day')::date
+                        ELSE make_date($3::int, 12, 31)
+                    END AS end_date
+         ),
+         calendar AS (
+             SELECT dates.work_date::date AS work_date
+             FROM bounds
+             CROSS JOIN LATERAL generate_series(
+                 GREATEST(
+                     bounds.start_date,
+                     COALESCE((SELECT joining_date FROM employees WHERE id = $1), bounds.start_date)
+                 ),
+                 LEAST(bounds.end_date, CURRENT_DATE),
+                 INTERVAL '1 day'
+             ) AS dates(work_date)
+             UNION
+             SELECT existing_attendance.work_date
+             FROM attendance existing_attendance
+             CROSS JOIN bounds
+             WHERE existing_attendance.employee_id = $1
+               AND existing_attendance.work_date BETWEEN bounds.start_date
+                   AND LEAST(bounds.end_date, CURRENT_DATE)
+         )
+         SELECT COALESCE(a.id::text, 'absent-' || calendar.work_date::text) AS id,
+                COALESCE(a.employee_id, e.id) AS employee_id,
+                calendar.work_date::text AS work_date,
+                a.check_in,
+                a.check_out,
+                CASE
+                    WHEN a.check_in IS NULL AND a.check_out IS NULL THEN 'absent'
+                    ELSE COALESCE(a.status, 'present')
+                END AS status,
+                e.name AS employee_name,
+                e.employee_code
+         FROM calendar
+         CROSS JOIN employees e
+         LEFT JOIN attendance a ON a.employee_id = e.id AND a.work_date = calendar.work_date
+         WHERE e.id = $1
+         ORDER BY calendar.work_date DESC`,
+        [employeeId, period.date, period.year, period.month]
+    );
+    res.json({ success: true, data: result.rows });
+});
 
 const listAttendance = asyncHandler(async (req, res) => {
     const employeeId = req.user.role === "employee" ? await getEmployeeIdForUser(req.user.id) : null;
@@ -171,6 +256,8 @@ const checkOut = asyncHandler(async (req, res) => {
 
 module.exports = {
     listAttendance,
+    listMyAttendance,
+    parseAttendancePeriod,
     getAttendance,
     updateAttendance,
     createAttendance,

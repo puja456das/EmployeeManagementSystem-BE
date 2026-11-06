@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, getRows } from "../../api.js";
 import { dateLabel } from "../../utils/formatters.js";
+import HolidayCalendar from "../../components/HolidayCalendar.jsx";
 import { ErrorBanner } from "../../components/ui.jsx";
 import RecordTable from "../../components/RecordTable.jsx";
 
@@ -19,6 +20,7 @@ export default function Holidays() {
   return <div className="space-y-6">
     <div><p className="text-[11px] font-bold uppercase tracking-[.16em] text-brand">Your workspace</p><h1 className="mt-2 text-[27px] font-bold tracking-tight text-ink">Holidays</h1><p className="mt-1 text-xs text-slate-400">Upcoming company holidays.</p></div>
     {error && <ErrorBanner message={error} retry={loadHolidays} />}
+    {!loading && <HolidayCalendar holidays={holidays} />}
     <RecordTable title="Company holidays" rows={holidays} loading={loading} error="" search={search} onSearch={setSearch} columns={[
       { label: "Holiday", render: (row) => <span className="font-semibold text-ink">{row.name}</span> },
       { label: "Date", render: (row) => dateLabel(row.holiday_date) },

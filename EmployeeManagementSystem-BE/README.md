@@ -101,6 +101,7 @@ All routes are prefixed with `/api`.
 These are 77 module endpoints. `GET /` and `GET /api/test-db` are two additional health endpoints.
 
 Employees can access their own attendance, leave, payroll, profile, and documents. Employee check-in and check-out can each be recorded once per workday; the API rejects duplicate punches. Admin and HR can view and manage organization-wide attendance and leave records; only admins can manage users and delete selected records.
+HR users with a linked employee profile can also check in/out directly from the HR Attendance page. Those self-service punches are restricted to the HR user's own linked profile. Employees and HR users can view their attendance by year, month, or specific date; days without either punch are displayed as absent, including weekends and holidays, starting from the employee's joining date.
 
 Creating an employee from the admin/HR employee form also creates a linked employee
 login and emails a branded, one-time six-digit account setup code (valid for 24 hours).
@@ -119,9 +120,10 @@ record without creating a duplicate ID or changing the employee's work email.
 Create employee logins from **Employees** so each login is linked to its employee
 record; standalone employee accounts are rejected.
 Admins can also create a separate employee-portal login from **User Access** by
-choosing the employee role and linking an existing employee ID. Email aliases such
-as `name+1@example.com` can be used as separate login names when the mail provider
-routes plus-addresses to the same inbox.
+choosing the employee role and linking an existing employee ID. For an HR profile,
+the employee login may use the same work email as the HR login; choose the Employee
+workspace and its separate password to access personal attendance. Other existing
+employee logins still need a unique login email.
 
 Each employee receives 12 paid-leave days per calendar year by default. Admin/HR
 can change the annual allowance in the employee form. Approved calendar days are

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { api, getRows } from "../../api.js";
 import { dateLabel } from "../../utils/formatters.js";
+import HolidayCalendar from "../../components/HolidayCalendar.jsx";
 import { ErrorBanner } from "../../components/ui.jsx";
 import RecordDialog from "../../components/RecordDialog.jsx";
 import RecordTable from "../../components/RecordTable.jsx";
@@ -48,6 +49,7 @@ export default function Holidays({ user }) {
   return <div className="space-y-6">
     <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-[11px] font-bold uppercase tracking-[.16em] text-brand">People operations</p><h1 className="mt-2 text-[27px] font-bold tracking-tight text-ink">Holidays</h1><p className="mt-1 text-xs text-slate-400">Plan ahead with your company holiday calendar.</p></div><button onClick={() => openForm()} className="rounded-xl bg-brand px-4 py-2.5 text-[11px] font-bold text-white"><Plus size={15} className="mr-1.5 inline" />Add holiday</button></div>
     {error && <ErrorBanner message={error} retry={loadHolidays} />}
+    {!loading && <HolidayCalendar holidays={holidays} />}
     <RecordTable title="Company holidays" rows={holidays} loading={loading} error="" search={search} onSearch={setSearch} columns={[
       { label: "Holiday", render: (row) => <span className="font-semibold text-ink">{row.name}</span> },
       { label: "Date", render: (row) => dateLabel(row.holiday_date) },

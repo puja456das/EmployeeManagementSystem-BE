@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Camera, Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { Camera, Mail, Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { api, getRows } from "../../api.js";
 import { currency } from "../../utils/formatters.js";
 import EmployeeAvatar from "../../components/EmployeeAvatar.jsx";
@@ -18,18 +18,23 @@ export default function Employees({ user }) {
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [noticeIsWarning, setNoticeIsWarning] = useState(false);
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(blank);
   const [photo, setPhoto] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [invitingId, setInvitingId] = useState(null);
   const selectableDepartments = editing
     ? departments
     : departments.filter((department) => department.name.trim().toLowerCase() !== "admin");
   const matchingEmployee = !editing && form.email.trim()
     ? employees.find((employee) => employee.email?.trim().toLowerCase() === form.email.trim().toLowerCase())
     : null;
+  const normalizedBankAccountNumber = form.bank_account_number.replace(/[\s-]/g, "");
+  const bankAccountInvalid = form.bank_account_number.length > 0 && !/^\d{6,34}$/.test(normalizedBankAccountNumber);
 
   const loadEmployees = useCallback(async () => {
     setLoading(true); setError("");
@@ -63,6 +68,10 @@ export default function Employees({ user }) {
       setError(`This work email already belongs to ${matchingEmployee.name} (${matchingEmployee.employee_code}). Edit the existing profile instead.`);
       return;
     }
+    if (bankAccountInvalid) {
+      setError("Bank account number must contain 6 to 34 digits. Example: 1234-5678-9012.");
+      return;
+    }
     setSaving(true);
     let body = { ...form, salary: Number(form.salary), annual_paid_leave_days: Number(form.annual_paid_leave_days) };
     if (photo) {
@@ -72,13 +81,24 @@ export default function Employees({ user }) {
       body = multipart;
     }
     try {
-      await api(editing ? `/employees/${editing.id}` : "/employees", {
+      const result = await api(editing ? `/employees/${editing.id}` : "/employees", {
         method: editing ? "PUT" : "POST", body
       });
       setOpen(false);
+      setNotice(result.message || "Employee saved.");
+      setNoticeIsWarning(result.invitationSent === false);
       await loadEmployees();
     } catch (requestError) { setError(requestError.message); }
     finally { setSaving(false); }
+  };
+  const resendInvite = async (employee) => {
+    setError(""); setNotice(""); setInvitingId(employee.id);
+    try {
+      const result = await api(`/employees/${employee.id}/invite`, { method: "POST" });
+      setNotice(result.message || "Setup invitation sent.");
+      setNoticeIsWarning(false);
+    } catch (requestError) { setError(requestError.message); }
+    finally { setInvitingId(null); }
   };
   const deleteEmployee = async (employee) => {
     if (!window.confirm(`Delete ${employee.name} and the linked employee account?`)) return;
@@ -95,16 +115,17 @@ export default function Employees({ user }) {
     { label: "Email", render: (row) => row.email },
     { label: "Monthly salary", render: (row) => currency(row.salary) },
     { label: "Status", render: (row) => <StatusBadge value={row.status} /> },
-    { label: "Actions", render: (row) => <div className="flex justify-end gap-1">{user.role === "hr" && <button onClick={() => openForm(row)} title="Edit employee" className="rounded-lg p-2 text-slate-400 hover:bg-violet-50 hover:text-brand"><Pencil size={14} /></button>}{(user.role === "admin" || user.role === "hr") && <button onClick={() => deleteEmployee(row)} title="Delete employee" className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={14} /></button>}</div> }
+    { label: "Actions", render: (row) => <div className="flex justify-end gap-1"><button disabled={invitingId === row.id} onClick={() => resendInvite(row)} title="Resend account setup invitation" aria-label={`Resend setup invitation to ${row.name}`} className="rounded-lg p-2 text-slate-400 hover:bg-violet-50 hover:text-brand disabled:opacity-50"><Mail size={14} /></button>{user.role === "hr" && <button onClick={() => openForm(row)} title="Edit employee" className="rounded-lg p-2 text-slate-400 hover:bg-violet-50 hover:text-brand"><Pencil size={14} /></button>}{(user.role === "admin" || user.role === "hr") && <button onClick={() => deleteEmployee(row)} title="Delete employee" className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={14} /></button>}</div> }
   ];
 
   return <div className="space-y-6">
     <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-[11px] font-bold uppercase tracking-[.16em] text-brand">{user.role === "admin" ? "Admin platform" : "People operations"}</p><h1 className="mt-2 text-[27px] font-bold tracking-tight text-ink">Employees</h1><p className="mt-1 text-xs text-slate-400">{user.role === "admin" ? "View employee records or add a new employee." : "Manage employee profiles, job information, and accounts."}</p></div><button onClick={() => openForm()} className="rounded-xl bg-brand px-4 py-2.5 text-[11px] font-bold text-white"><Plus size={15} className="mr-1.5 inline" />Add employee</button></div>
+    {notice && <p role="status" className={`rounded-xl border px-4 py-3 text-xs font-semibold ${noticeIsWarning ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-100 bg-emerald-50 text-emerald-700"}`}>{notice}</p>}
     {error && <ErrorBanner message={error} retry={loadEmployees} />}
     <div className="grid gap-3 sm:grid-cols-3"><MiniMetric title="Total employees" value={employees.length} color="violet" /><MiniMetric title="Active employees" value={employees.filter((employee) => employee.status === "Active").length} color="green" /><MiniMetric title="Departments" value={new Set(employees.map((employee) => employee.department).filter(Boolean)).size} color="blue" /></div>
     <RecordTable title="Employees" rows={employees} columns={columns} loading={loading} error="" search={search} onSearch={setSearch} />
     {open && <RecordDialog title={editing ? "Edit employee" : "Add employee"} description={editing ? "Update this employee profile without changing their existing Employee ID." : "One employee profile per work email. Existing profiles keep their original Employee ID."} onClose={() => setOpen(false)} onSubmit={saveEmployee} saving={saving} error={error}>
-      <div className="flex items-center gap-3 rounded-xl border border-violet-100 bg-violet-50/60 p-3 sm:col-span-2"><ShieldCheck size={18} className="shrink-0 text-brand" /><p className="text-[10px] leading-5 text-slate-600">New employees receive an email with a one-time code to set their own password. Passwords are never emailed.</p></div>
+      <div className="flex items-center gap-3 rounded-xl border border-violet-100 bg-violet-50/60 p-3 sm:col-span-2"><ShieldCheck size={18} className="shrink-0 text-brand" /><p className="text-[10px] leading-5 text-slate-600">New employees receive an email with a one-time code to set their own password. If delivery fails, the employee is still saved; check the backend terminal, fix SMTP in the backend .env, restart, then use the envelope action to resend.</p></div>
       <div className="flex items-center gap-4 sm:col-span-2">
         <EmployeeAvatar employeeId={editing?.id} hasPhoto={editing?.has_profile_image} file={photo} name={form.name || editing?.name} className="h-14 w-14 rounded-2xl text-sm" />
         <label className="text-[10px] font-bold text-slate-600"><span className="inline-flex items-center gap-2"><Camera size={14} className="text-brand" />Profile photo (optional)</span><input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const selected = event.target.files?.[0] || null; if (selected && selected.size > 5 * 1024 * 1024) { setError("Profile photo must be 5 MB or smaller."); event.target.value = ""; return; } setPhoto(selected); }} className="mt-2 block w-full text-[10px] font-normal" /><span className="font-normal text-slate-400">JPG, PNG or WebP · up to 5 MB</span></label>
@@ -116,7 +137,7 @@ export default function Employees({ user }) {
       <label className="block text-[10px] font-bold text-slate-600">Monthly salary<input required min="0" type="number" step="any" value={form.salary} onChange={(event) => setForm({ ...form, salary: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-normal" /></label>
       <label className="block text-[10px] font-bold text-slate-600">Annual paid leave days<input min="0" max="365" type="number" value={form.annual_paid_leave_days} onChange={(event) => setForm({ ...form, annual_paid_leave_days: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-normal" /></label>
       <label className="block text-[10px] font-bold text-slate-600">Phone<input type="tel" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-normal" /></label>
-      <label className="block text-[10px] font-bold text-slate-600">Bank account number<input maxLength={45} value={form.bank_account_number} onChange={(event) => setForm({ ...form, bank_account_number: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-normal" /><span className="font-normal text-slate-400">Encrypted before saving. Leave blank when editing to keep the current number.</span></label>
+      <label className="block text-[10px] font-bold text-slate-600">Bank account number<input inputMode="numeric" maxLength={45} aria-invalid={bankAccountInvalid} value={form.bank_account_number} onChange={(event) => { setError(""); setForm({ ...form, bank_account_number: event.target.value }); }} placeholder="e.g. 1234-5678-9012" className={`mt-1.5 h-11 w-full rounded-xl border px-3 text-xs font-normal ${bankAccountInvalid ? "border-rose-400" : "border-slate-200"}`} />{bankAccountInvalid ? <span className="mt-1 block font-normal text-rose-600">Enter 6–34 digits; spaces and hyphens are allowed. Example: 1234-5678-9012.</span> : <span className="mt-1 block font-normal text-slate-400">Enter 6–34 digits; spaces and hyphens are allowed. Example: 1234-5678-9012. Encrypted before saving; leave blank when editing to keep the current number.</span>}</label>
       <label className="block text-[10px] font-bold text-slate-600">Joining date<input type="date" value={form.joining_date} onChange={(event) => setForm({ ...form, joining_date: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-normal" /></label>
       <label className="block text-[10px] font-bold text-slate-600">Status<select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-normal"><option>Active</option><option>Inactive</option></select></label>
       <label className="block text-[10px] font-bold text-slate-600 sm:col-span-2">Home address<textarea rows={2} value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-normal" /></label>

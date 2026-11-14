@@ -92,7 +92,7 @@ npm run dev
 ```
 
 The terminal shows both processes. Open the Vite URL it prints (normally
-`http://localhost:5173`) and sign in with the admin account configured in the
+`http://localhost:5174`) and sign in with the admin account configured in the
 backend `.env`. Press `Ctrl+C` to stop both processes. The API listens on the
 port set by the backend `.env` (default `5000`); `http://localhost:5000/` lists
 the API modules and `http://localhost:5000/api/test-db` checks the database
@@ -109,3 +109,9 @@ npm run build:frontend
 For detailed API routes, database requirements, and email configuration, see
 [`EmployeeManagementSystem-BE/README.md`](./EmployeeManagementSystem-BE/README.md)
 and [`EmployeeManagementSystem-FE/README.md`](./EmployeeManagementSystem-FE/README.md).
+
+For the Bengali interview walkthrough, demo script, and project Q&A, see
+[`INTERVIEW_DEMO_GUIDE_BN.md`](./INTERVIEW_DEMO_GUIDE_BN.md).
+
+For Vercel + Render + Neon deployment steps, see
+[`DEPLOYMENT_GUIDE_BN.md`](./DEPLOYMENT_GUIDE_BN.md).

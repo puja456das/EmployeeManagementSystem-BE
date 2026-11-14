@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: teamnest-api
+    runtime: node
+    plan: free
+    rootDir: EmployeeManagementSystem-BE
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: BANK_DETAILS_ENCRYPTION_KEY
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false

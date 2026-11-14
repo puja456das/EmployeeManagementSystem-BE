@@ -1,11 +1,13 @@
+const fs = require("fs");
 const nodemailer = require("nodemailer");
+const nodeTls = require("tls");
 
 const getCompanyName = () => process.env.COMPANY_NAME || "Employee Management System";
-const getFrontendUrl = () => (process.env.FRONTEND_URL || "http://localhost:5173")
+const getFrontendUrl = () => (process.env.FRONTEND_URL || "http://localhost:5174")
     .split(",")[0].trim().replace(/\/$/, "");
 
 const createMailTransport = () => {
-    const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_SECURE } = process.env;
+    const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_SECURE, SMTP_TLS_CA_FILE } = process.env;
     if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
         const error = new Error(
             "Email delivery is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_PASS in the backend .env file, then restart the backend."
@@ -14,11 +16,21 @@ const createMailTransport = () => {
         error.code = "EMAIL_NOT_CONFIGURED";
         throw error;
     }
+    const trustedCertificates = new Set(nodeTls.rootCertificates || []);
+    if (typeof nodeTls.getCACertificates === "function") {
+        for (const certificate of nodeTls.getCACertificates("system")) {
+            trustedCertificates.add(certificate);
+        }
+    }
+    if (SMTP_TLS_CA_FILE) {
+        trustedCertificates.add(fs.readFileSync(SMTP_TLS_CA_FILE, "utf8"));
+    }
     return nodemailer.createTransport({
         host: SMTP_HOST,
         port: Number(SMTP_PORT),
         secure: SMTP_SECURE === "true",
-        auth: { user: SMTP_USER, pass: SMTP_PASS }
+        auth: { user: SMTP_USER, pass: SMTP_PASS },
+        tls: { ca: [...trustedCertificates] }
     });
 };
 
@@ -42,11 +54,13 @@ const sendEmployeeInvite = async (user, employee, code, role = "employee") => {
         });
     } catch (cause) {
         console.error("Employee invitation email delivery failed:", cause.message);
-        const error = new Error(
-            cause.code === "EMAIL_NOT_CONFIGURED"
-                ? cause.message
-                : "Employee account could not be created because the invitation email could not be delivered. Verify SMTP settings and restart the backend."
-        );
+        let message = "The invitation email could not be delivered. Check the backend terminal for the SMTP error, verify SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_SECURE in the backend .env, then restart the backend.";
+        if (cause.code === "EMAIL_NOT_CONFIGURED") {
+            message = cause.message;
+        } else if (cause.code === "EAUTH") {
+            message = "The SMTP server rejected authentication. Verify SMTP_USER and SMTP_PASS, and make sure SMTP AUTH is enabled for this mailbox.";
+        }
+        const error = new Error(message);
         error.status = 503;
         throw error;
     }

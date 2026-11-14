@@ -8,6 +8,7 @@ const {
     getEmployeeById,
     getEmployeePhoto,
     addEmployee,
+    resendEmployeeInvite,
     updateEmployee,
     patchEmployee,
     deleteEmployee
@@ -31,6 +32,7 @@ router.get("/:id", allowRoles("admin", "hr"), getEmployeeById);
 
 // POST - Add Employee (With Validation)
 router.post("/", allowRoles("admin", "hr"), profileImageUpload.single("profile_image"), validateEmployee, addEmployee);
+router.post("/:id/invite", allowRoles("admin", "hr"), resendEmployeeInvite);
 
 // PUT - Full Update Employee (With Validation)
 router.put("/:id", allowRoles("hr"), profileImageUpload.single("profile_image"), validateEmployee, updateEmployee);

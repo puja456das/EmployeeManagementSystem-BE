@@ -1,4 +1,5 @@
-const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/$/, "");
+const API_HOST = typeof window === "undefined" ? "localhost" : window.location.hostname;
+const API_URL = (import.meta.env.VITE_API_URL || `http://${API_HOST}:5000/api`).replace(/\/$/, "");
 
 export class ApiError extends Error {
   constructor(message, status) {

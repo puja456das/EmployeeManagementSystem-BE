@@ -173,6 +173,7 @@ const migrate = async () => {
                 file_data BYTEA NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
+            ALTER TABLE documents ADD COLUMN IF NOT EXISTS description TEXT;
 
             CREATE TABLE IF NOT EXISTS password_reset_tokens (
                 id BIGSERIAL PRIMARY KEY,

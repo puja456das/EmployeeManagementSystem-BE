@@ -16,7 +16,7 @@ const encryptBankAccount = (accountNumber) => {
     if (accountNumber === undefined || accountNumber === null || accountNumber === "") return null;
     const normalized = String(accountNumber).replace(/[\s-]/g, "");
     if (!/^\d{6,34}$/.test(normalized)) {
-        const error = new Error("Bank account number must contain 6 to 34 digits.");
+        const error = new Error("Bank account number must contain 6 to 34 digits after removing spaces and hyphens (for example, 123456789012).");
         error.status = 400;
         throw error;
     }

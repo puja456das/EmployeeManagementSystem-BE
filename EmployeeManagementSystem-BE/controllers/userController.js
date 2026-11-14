@@ -109,8 +109,12 @@ const ensureEmployeeLogin = async (client, employeeId) => {
          VALUES ($1, $2, 'employee_invite', NOW() + INTERVAL '24 hours')`,
         [employeeUserId, codeHash]
     );
-    await sendEmployeeInvite({ name: employee.name, email: employee.email }, employee, code);
-    return true;
+    return {
+        user: { name: employee.name, email: employee.email },
+        employee,
+        code,
+        role: "employee"
+    };
 };
 
 const listUsers = asyncHandler(async (req, res) => {
@@ -276,7 +280,7 @@ const replaceUser = asyncHandler(async (req, res) => {
     }
     const linkedEmployeeId = getLinkedEmployeeId(role, req.body.employee_id);
     const client = await pool.connect();
-    let employeeLoginCreated = false;
+    let employeeLoginInvitation = null;
     try {
         await client.query("BEGIN");
         await ensureEmployeeExists(client, linkedEmployeeId);
@@ -298,14 +302,33 @@ const replaceUser = asyncHandler(async (req, res) => {
             return res.status(404).json({ success: false, message: "User not found" });
         }
         if (role === "admin" && linkedEmployeeId) {
-            employeeLoginCreated = await ensureEmployeeLogin(client, linkedEmployeeId);
+            employeeLoginInvitation = await ensureEmployeeLogin(client, linkedEmployeeId);
         }
         await client.query("COMMIT");
+
+        let invitationSent = true;
+        if (employeeLoginInvitation) {
+            try {
+                await sendEmployeeInvite(
+                    employeeLoginInvitation.user,
+                    employeeLoginInvitation.employee,
+                    employeeLoginInvitation.code,
+                    employeeLoginInvitation.role
+                );
+            } catch (error) {
+                invitationSent = false;
+                console.error("System admin was updated, but the employee setup invitation could not be delivered:", error.message);
+            }
+        }
+
         res.json({
             success: true,
             user: result.rows[0],
-            ...(employeeLoginCreated && {
-                message: "System admin profile linked. A separate employee login setup email was sent to the employee work email."
+            ...(employeeLoginInvitation && {
+                invitationSent,
+                message: invitationSent
+                    ? "System admin profile linked. A separate employee login setup email was sent to the employee work email."
+                    : "System admin profile linked and employee login created, but the setup email could not be delivered. Fix SMTP and resend the invitation from the Employees page."
             })
         });
     } catch (error) {

@@ -40,10 +40,15 @@ SMTP_SECURE=false
 SMTP_USER=your-outlook-email
 SMTP_PASS=your-email-provider-password
 SMTP_FROM=your-outlook-email
+# Optional: absolute path to the SMTP server's trusted CA bundle
+SMTP_TLS_CA_FILE=
 COMPANY_NAME=Employee Management System
 ```
 
-Set `FRONTEND_URL` to the browser-accessible frontend address. Password reset uses
+Set `FRONTEND_URL` to the browser-accessible frontend address (the Vite development
+server defaults to port `5174`). Employee and HR accounts are saved even if the
+invitation email cannot be delivered; after fixing SMTP, resend the setup email from
+the Employees page. Password reset uses
 a six-digit email code and does not require opening an email link. Do not commit `.env` or share
 SMTP credentials. After adding password recovery, run `npm run migrate` again to
 create the password-reset token and OTP tables.
@@ -53,19 +58,24 @@ For Outlook/Microsoft 365, use `smtp.office365.com`, port `587`, and
 mailbox. `SMTP_PASS` must be accepted by your organization's SMTP AUTH policy;
 some Microsoft 365 tenants disable SMTP AUTH or app passwords, in which case an
 administrator must enable an approved mail-sending method. Never paste mail
-credentials into chat or frontend `.env` files.
+credentials into chat or frontend `.env` files. For a custom SMTP server with a
+private certificate authority, set `SMTP_TLS_CA_FILE` to the absolute path of the
+trusted CA certificate/bundle supplied by the mail-server administrator. Do not
+disable TLS certificate verification to work around an untrusted certificate.
 
 Generate and preserve a 32-byte random key in `BANK_DETAILS_ENCRYPTION_KEY`.
 Employee bank account numbers are encrypted at rest with AES-256-GCM and only
 masked values are returned to the frontend. Losing this key makes stored bank
 numbers unreadable. Do not send financial details by email.
 
-The React frontend lives in the sibling `EmployeeManagementSystem-FE` folder. Configure
-`VITE_API_URL` there if the API is not available at `http://localhost:5000/api`, then
-run `npm install` and `npm run dev` from the frontend folder. Set `FRONTEND_URL` in the
-backend `.env` to the frontend origin (usually `http://localhost:5173`).
+The React frontend lives in the sibling `EmployeeManagementSystem-FE` folder. By default,
+it connects to the API on the same host as the page at port `5000`; set `VITE_API_URL`
+in the frontend `.env` if the API is on another host. Run `npm install` and `npm run dev`
+from the frontend folder. Set `FRONTEND_URL` in the backend `.env` to the frontend origin;
+multiple allowed origins can be comma-separated. When `FRONTEND_URL` is set, local/private
+network origins on the Vite development port `5174` are also allowed.
 
-The API listens on port `5000` by default. Set `FRONTEND_URL` to the frontend origin; multiple allowed origins can be comma-separated.
+The API listens on port `5000` by default.
 
 ## Authentication
 
@@ -87,7 +97,7 @@ All routes are prefixed with `/api`.
 |---|---|
 | Auth (8) | `POST /auth/register`, `POST /auth/login`, `GET /auth/me`, `POST /auth/change-password`, `POST /auth/forgot-password`, `POST /auth/verify-reset-otp`, `POST /auth/verify-employee-invite-otp`, `POST /auth/reset-password` |
 | Users (9) | `GET/POST /users`, `GET/PUT/PATCH/DELETE /users/:id`, `GET /users/roles`, `PATCH /users/:id/role`, `POST /users/:id/reset-password` |
-| Employees (7) | `GET/POST /employees`, `GET/PUT/PATCH/DELETE /employees/:id`, `GET /employees/:id/photo` |
+| Employees (8) | `GET/POST /employees`, `GET/PUT/PATCH/DELETE /employees/:id`, `GET /employees/:id/photo`, `POST /employees/:id/invite` |
 | Departments (6) | `GET/POST /departments`, `GET/PATCH/DELETE /departments/:id`, `GET /departments/:id/employees` |
 | Attendance (8) | `GET/POST /attendance`, `GET /attendance/summary`, `GET/PATCH/DELETE /attendance/:id`, `POST /attendance/check-in`, `POST /attendance/check-out` |
 | Leaves (8) | `GET/POST /leaves`, `GET/PUT/DELETE /leaves/:id`, `PATCH /leaves/:id/review`, `POST /leaves/:id/cancel`, `GET /leaves/balance/me` |
@@ -135,7 +145,7 @@ enter the work email and setup code from the welcome email, then create their ow
 password. Setup codes are one-use and expire after 24 hours; five incorrect attempts
 invalidate a code.
 
-Document uploads use multipart form data with a `file` field. PDF, JPG, PNG, and DOCX are accepted, up to 5 MB per file. Files are stored in PostgreSQL.
+Document uploads use multipart form data with a `file` field. PDF, JPG, PNG, and DOCX are accepted, up to 5 MB per file. HR/admin can add a document description and share one upload with multiple employees; each recipient gets a separately permission-scoped document record. Employee uploads remain private to the employee. Files are stored in PostgreSQL.
 
 ## Health checks
 

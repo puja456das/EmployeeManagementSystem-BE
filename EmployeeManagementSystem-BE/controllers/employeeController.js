@@ -61,6 +61,22 @@ const presentEmployee = (employee) => {
     };
 };
 
+const createEmployeeInviteCode = async (client, userId) => {
+    const code = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
+    const codeHash = crypto.createHmac("sha256", process.env.JWT_SECRET)
+        .update(`${userId}:${code}`).digest("hex");
+    await client.query(
+        "UPDATE password_reset_otps SET used_at = NOW() WHERE user_id = $1 AND purpose = 'employee_invite' AND used_at IS NULL",
+        [userId]
+    );
+    await client.query(
+        `INSERT INTO password_reset_otps (user_id, code_hash, purpose, expires_at)
+         VALUES ($1, $2, 'employee_invite', NOW() + INTERVAL '24 hours')`,
+        [userId, codeHash]
+    );
+    return code;
+};
+
 const getEmployees = asyncHandler(async (req, res) => {
     const result = await pool.query(
         `SELECT ${employeeSelection},
@@ -117,6 +133,7 @@ const addEmployee = asyncHandler(async (req, res) => {
     const client = await pool.connect();
     let employee;
     let accountRole;
+    let invitation;
     try {
         await client.query("BEGIN");
         const existingEmployee = await client.query(
@@ -166,24 +183,13 @@ const addEmployee = asyncHandler(async (req, res) => {
                 [employee.id, userResult.rows[0].id]
             );
         }
-        const code = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
-        const codeHash = crypto.createHmac("sha256", process.env.JWT_SECRET)
-            .update(`${userResult.rows[0].id}:${code}`).digest("hex");
-        await client.query(
-            "UPDATE password_reset_otps SET used_at = NOW() WHERE user_id = $1 AND purpose = 'employee_invite' AND used_at IS NULL",
-            [userResult.rows[0].id]
-        );
-        await client.query(
-            `INSERT INTO password_reset_otps (user_id, code_hash, purpose, expires_at)
-             VALUES ($1, $2, 'employee_invite', NOW() + INTERVAL '24 hours')`,
-            [userResult.rows[0].id, codeHash]
-        );
-        await sendEmployeeInvite(
-            { name: employee.name, email: employee.email },
+        const code = await createEmployeeInviteCode(client, userResult.rows[0].id);
+        invitation = {
+            user: { name: employee.name, email: employee.email },
             employee,
             code,
-            accountRole
-        );
+            role: accountRole
+        };
         await client.query("COMMIT");
     } catch (error) {
         await client.query("ROLLBACK");
@@ -211,12 +217,75 @@ const addEmployee = asyncHandler(async (req, res) => {
     } finally {
         client.release();
     }
+
+    let invitationSent = true;
+    try {
+        await sendEmployeeInvite(invitation.user, invitation.employee, invitation.code, invitation.role);
+    } catch (error) {
+        invitationSent = false;
+        console.error("Employee was created, but the setup invitation could not be delivered:", error.message);
+    }
+
     res.status(201).json({
         success: true,
-        message: accountRole === "hr"
-            ? "HR account created and setup code emailed to the HR employee"
-            : "Employee account created and setup code emailed to the employee",
+        invitationSent,
+        message: invitationSent
+            ? accountRole === "hr"
+                ? "HR account created and setup code emailed to the HR employee"
+                : "Employee account created and setup code emailed to the employee"
+            : "Employee account created, but the setup email could not be delivered. Fix SMTP and resend the invitation from the Employees page.",
         employee: { ...presentEmployee(employee), login_role: accountRole }
+    });
+});
+
+const resendEmployeeInvite = asyncHandler(async (req, res) => {
+    const employeeResult = await pool.query(
+        `SELECT u.id AS user_id, u.name, u.email, u.role,
+                e.id AS employee_id, e.employee_code, e.name AS employee_name,
+                e.email AS employee_email
+         FROM employees e
+         JOIN users u ON (u.id = e.user_id OR u.linked_employee_id = e.id)
+         WHERE e.id = $1 AND u.role IN ('employee', 'hr')
+         ORDER BY CASE WHEN u.id = e.user_id THEN 0 ELSE 1 END,
+                  CASE WHEN u.role = 'hr' THEN 0 ELSE 1 END
+         LIMIT 1`,
+        [req.params.id]
+    );
+    if (!employeeResult.rowCount) {
+        return res.status(404).json({ success: false, message: "No employee or HR login is linked to this employee profile" });
+    }
+
+    const account = employeeResult.rows[0];
+    const client = await pool.connect();
+    let code;
+    try {
+        await client.query("BEGIN");
+        const lockedUser = await client.query(
+            "SELECT id FROM users WHERE id = $1 FOR UPDATE",
+            [account.user_id]
+        );
+        if (!lockedUser.rowCount) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({ success: false, message: "The linked login account no longer exists" });
+        }
+        code = await createEmployeeInviteCode(client, account.user_id);
+        await client.query("COMMIT");
+    } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+    } finally {
+        client.release();
+    }
+
+    await sendEmployeeInvite(
+        { name: account.name, email: account.email },
+        { employee_code: account.employee_code },
+        code,
+        account.role
+    );
+    res.json({
+        success: true,
+        message: `Setup invitation sent to ${account.email}`
     });
 });
 
@@ -388,6 +457,7 @@ module.exports = {
     getEmployeeById,
     getEmployeePhoto,
     addEmployee,
+    resendEmployeeInvite,
     updateEmployee,
     patchEmployee,
     deleteEmployee

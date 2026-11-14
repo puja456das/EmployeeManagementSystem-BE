@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronRight, Sparkles, Users } from "lucide-react";
 import { api } from "../../api.js";
+import heroImage from "../../assets/EMS.webp";
 
 export default function Login({ onLogin }) {
   const searchParams = new URLSearchParams(window.location.search);
@@ -112,17 +113,29 @@ export default function Login({ onLogin }) {
     : mode === "reset" ? isInvite ? `Welcome to the team. Set a password to activate your ${setupRole === "hr" ? "HR" : "employee"} account.` : "Your new password must be at least 8 characters."
         : "Enter your details to access your workspace.";
   return (
-    <div className="login-scene flex min-h-screen items-center justify-center px-4 py-10">
-      <div className="grid w-full max-w-[960px] overflow-hidden rounded-[28px] bg-white shadow-2xl md:grid-cols-[1fr_1fr]">
-        <section className="relative hidden min-h-[660px] flex-col justify-between overflow-hidden bg-gradient-to-br from-[#655be8] to-[#9a85f7] p-12 text-white md:flex">
-          <div className="absolute -right-20 top-28 h-64 w-64 rounded-full border border-white/15" /><div className="absolute -right-7 top-40 h-40 w-40 rounded-full border border-white/15" />
-          <div className="relative flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-white/15"><Users size={21} /></div><span className="text-lg font-extrabold">TeamNest</span></div>
-          <div className="relative max-w-[340px]"><div className="mb-5 inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1.5 text-[10px] font-semibold"><Sparkles size={13} />The people-first workspace</div><h1 className="text-[38px] font-bold leading-[1.13] tracking-tight">Great teams start with <span className="text-[#d6d2ff]">people.</span></h1><p className="mt-4 text-sm leading-6 text-white/75">One thoughtful place to bring your people, processes, and progress together.</p></div>
-          <div className="relative flex items-center gap-3"><div className="flex -space-x-2">{["JD", "AM", "SK", "EL"].map((item, index) => <span key={item} className={`grid h-8 w-8 place-items-center rounded-full border-2 border-[#796eea] text-[9px] font-bold ${["bg-amber-200 text-amber-800", "bg-sky-200 text-sky-800", "bg-rose-200 text-rose-800", "bg-lime-200 text-lime-800"][index]}`}>{item}</span>)}</div><span className="text-[10px] text-white/80">Made for teams that care</span></div>
+    <div className="login-scene relative flex min-h-screen items-center justify-center px-3 py-5 sm:px-6 sm:py-8">
+      <div className="login-card grid w-full max-w-[1120px] overflow-hidden rounded-[30px] border border-white/70 bg-white shadow-[0_30px_90px_rgba(20,33,68,0.22)] md:grid-cols-[1.05fr_.95fr]">
+        <section className="login-hero relative flex min-h-[240px] flex-col justify-between overflow-hidden px-6 py-6 text-white sm:min-h-[280px] sm:px-10 sm:py-9 md:min-h-[680px] md:px-12 md:py-12">
+          <img src={heroImage} alt="" className="absolute inset-0 h-full w-full object-cover object-center" />
+          <div className="absolute inset-0 bg-gradient-to-br from-slate-950/85 via-slate-900/45 to-cyan-950/65" />
+          <div className="pointer-events-none absolute -right-16 top-16 h-64 w-64 rounded-full border border-white/20" />
+          <div className="pointer-events-none absolute -right-2 top-28 h-40 w-40 rounded-full border border-white/15" />
+          <div className="relative flex items-center gap-3">
+            <div className="grid h-11 w-11 place-items-center rounded-2xl border border-white/25 bg-white/15 shadow-lg backdrop-blur"><Users size={21} /></div>
+            <div><span className="block text-lg font-extrabold tracking-tight">TeamNest</span><span className="text-[9px] font-semibold uppercase tracking-[.2em] text-white/65">People • Work • Growth</span></div>
+          </div>
+          <div className="relative mt-8 max-w-[390px] md:mt-0">
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-[10px] font-semibold backdrop-blur"><Sparkles size={13} />The people-first workspace</div>
+            <h1 className="text-[30px] font-bold leading-[1.12] tracking-tight sm:text-[38px]">Great teams start with <span className="text-cyan-200">people.</span></h1>
+            <p className="mt-3 max-w-[340px] text-xs leading-6 text-white/80 sm:text-sm">One thoughtful place to bring your people, processes, and progress together.</p>
+          </div>
+          <div className="relative mt-7 hidden items-center gap-3 md:flex">
+            <div className="flex -space-x-2">{["JD", "AM", "SK", "EL"].map((item, index) => <span key={item} className={`grid h-8 w-8 place-items-center rounded-full border-2 border-slate-800 text-[9px] font-bold ${["bg-amber-200 text-amber-800", "bg-sky-200 text-sky-800", "bg-rose-200 text-rose-800", "bg-lime-200 text-lime-800"][index]}`}>{item}</span>)}</div>
+            <span className="text-[10px] text-white/80">Made for teams that care</span>
+          </div>
         </section>
-        <section className="flex min-h-[660px] flex-col justify-center px-8 py-14 sm:px-14">
-          <div className="mb-10 flex items-center gap-3 md:hidden"><div className="grid h-10 w-10 place-items-center rounded-xl bg-brand text-white"><Users size={20} /></div><span className="text-lg font-extrabold text-ink">TeamNest</span></div>
-          <div className="mb-8"><p className="text-[11px] font-bold uppercase tracking-[.16em] text-brand">{mode === "login" ? "Welcome back" : "Account recovery"}</p><h2 className="mt-2 text-[27px] font-bold tracking-tight text-ink">{title}</h2><p className="mt-2 text-xs leading-5 text-slate-400">{description}</p></div>
+        <section className="flex flex-col justify-center px-6 py-8 sm:px-10 sm:py-12 md:min-h-[680px] md:px-12 lg:px-14">
+          <div className="mb-7"><p className="text-[10px] font-bold uppercase tracking-[.18em] text-brand">{mode === "login" ? "TeamNest · Workspace access" : "Secure account setup"}</p><h2 className="mt-2 text-[26px] font-bold tracking-tight text-ink sm:text-[29px]">{title}</h2><p className="mt-2 text-xs leading-5 text-slate-500">{description}</p></div>
           {mode === "login" &&           <form onSubmit={submit} className="space-y-6">
             <label className="block text-xs font-semibold text-slate-600">Workspace<select required value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })} className="mt-2 h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-normal outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/10"><option value="">Choose your workspace</option><option value="employee">Employee</option><option value="hr">HR</option><option value="admin">System admin</option></select></label>
             <label className="block text-xs font-semibold text-slate-600">{form.role === "hr" ? "HR login email" : form.role === "admin" ? "Admin login email" : "Work email or employee ID"}<input required type="text" autoComplete="username" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder={form.role === "employee" ? "you@company.com or EMP-123" : "you@company.com"} className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-4 text-sm font-normal outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/10" />{form.role === "hr" && <span className="mt-1 block text-[10px] font-normal text-slate-400">Use the HR account email and password assigned by your administrator. They are separate from your employee portal login.</span>}</label>

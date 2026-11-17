@@ -1,12 +1,12 @@
 const express = require("express");
 const {
-    register, login, me, changePassword, requestPasswordReset, verifyPasswordResetOtp,
+    login, me, changePassword, requestPasswordReset, verifyPasswordResetOtp,
     verifyEmployeeInviteOtp, resetPassword
 } = require("../controllers/authController");
 const authenticate = require("../middleware/authMiddleware");
 const router = express.Router();
 
-router.post("/register", register);
+
 router.post("/login", login);
 router.post("/forgot-password", requestPasswordReset);
 router.post("/verify-reset-otp", verifyPasswordResetOtp);

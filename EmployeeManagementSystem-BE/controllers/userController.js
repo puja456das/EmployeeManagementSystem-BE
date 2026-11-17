@@ -144,7 +144,7 @@ const getUser = asyncHandler(async (req, res) => {
 });
 
 const listRoles = (req, res) => {
-    res.json({ success: true, roles: ["hr", "employee"] });
+    res.json({ success: true, roles: ["hr", "employee", "it", "support", "maintenance"] });
 };
 
 const createUser = asyncHandler(async (req, res) => {
@@ -152,8 +152,8 @@ const createUser = asyncHandler(async (req, res) => {
     if (!name?.trim() || !email?.trim() || !password) {
         return res.status(400).json({ success: false, message: "Name, email, and password are required" });
     }
-    if (!["hr", "employee"].includes(role)) {
-        return res.status(400).json({ success: false, message: "Only HR and employee accounts can be created here. The system admin is provisioned from ADMIN_EMAIL." });
+    if (!["hr", "employee", "it", "support", "maintenance"].includes(role)) {
+        return res.status(400).json({ success: false, message: "Choose HR, employee, IT, support, or maintenance. The system admin is provisioned from ADMIN_EMAIL." });
     }
     if (password.length < 8) {
         return res.status(400).json({ success: false, message: "Password must contain at least 8 characters" });
@@ -201,8 +201,8 @@ const createUser = asyncHandler(async (req, res) => {
 
 const updateUser = asyncHandler(async (req, res) => {
     const { name, role, password } = req.body;
-    if (role !== undefined && !["admin", "hr", "employee"].includes(role)) {
-        return res.status(400).json({ success: false, message: "Role must be admin, hr, or employee" });
+    if (role !== undefined && !["admin", "hr", "employee", "it", "support", "maintenance"].includes(role)) {
+        return res.status(400).json({ success: false, message: "Choose a valid platform role" });
     }
     if (role !== undefined && String(req.params.id) === String(req.user.id) && role !== "admin") {
         return res.status(400).json({ success: false, message: "You cannot remove your own admin role" });
@@ -251,7 +251,7 @@ const updateUser = asyncHandler(async (req, res) => {
 
 const replaceUser = asyncHandler(async (req, res) => {
     const { name, email, role, password } = req.body;
-    if (!name?.trim() || !email?.trim() || !["admin", "hr", "employee"].includes(role)) {
+    if (!name?.trim() || !email?.trim() || !["admin", "hr", "employee", "it", "support", "maintenance"].includes(role)) {
         return res.status(400).json({ success: false, message: "Name, email, and a valid role are required" });
     }
     if (password && password.length < 8) {
@@ -341,8 +341,8 @@ const replaceUser = asyncHandler(async (req, res) => {
 
 const updateUserRole = asyncHandler(async (req, res) => {
     const { role } = req.body;
-    if (!["admin", "hr", "employee"].includes(role)) {
-        return res.status(400).json({ success: false, message: "Role must be admin, hr, or employee" });
+    if (!["admin", "hr", "employee", "it", "support", "maintenance"].includes(role)) {
+        return res.status(400).json({ success: false, message: "Choose a valid platform role" });
     }
     if (role === "admin") {
         return res.status(400).json({ success: false, message: "The system admin role can only be provisioned during initial setup" });

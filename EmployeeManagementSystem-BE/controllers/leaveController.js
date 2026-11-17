@@ -2,6 +2,21 @@ const pool = require("../config/db");
 const asyncHandler = require("../utils/asyncHandler");
 const { getEmployeeIdForUser } = require("../utils/employeeAccount");
 
+const isDateOnly = (value) => {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const date = new Date(`${value}T00:00:00.000Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+};
+
+const findOverlappingLeave = async (db, employeeId, startDate, endDate, excludeId = null) => db.query(
+    `SELECT id FROM leaves
+     WHERE employee_id = $1 AND status IN ('pending', 'approved')
+       AND start_date <= $3::date AND end_date >= $2::date
+       AND ($4::bigint IS NULL OR id <> $4)
+     LIMIT 1`,
+    [employeeId, startDate, endDate, excludeId]
+);
+
 const leaveDayCount = (startDate, endDate) => {
     const dateKey = (value) => value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
     const start = new Date(`${dateKey(startDate)}T00:00:00Z`);
@@ -16,7 +31,7 @@ const getBalance = async (employeeId, year = new Date().getFullYear(), db = pool
                 COALESCE(SUM(
                     GREATEST(0, LEAST(l.end_date, make_date($2::int + 1, 1, 1) - 1)
                         - GREATEST(l.start_date, make_date($2::int, 1, 1)) + 1)
-                ) FILTER (WHERE l.status = 'approved'), 0)::int AS approved_days_used
+                ) FILTER (WHERE l.status = 'approved' AND l.leave_type <> 'unpaid'), 0)::int AS approved_days_used
          FROM employees e
          LEFT JOIN leaves l ON l.employee_id = e.id
              AND l.status = 'approved'
@@ -77,20 +92,23 @@ const updateLeave = asyncHandler(async (req, res) => {
     if (req.user.role === "employee" && !employeeId) {
         return res.status(404).json({ success: false, message: "Employee account is not linked" });
     }
-    const { start_date, end_date, reason } = req.body;
-    if (start_date && Number.isNaN(Date.parse(start_date))) {
+    const { start_date, end_date, reason, leave_type } = req.body;
+    if (Object.hasOwn(req.body, "start_date") && !isDateOnly(start_date)) {
         return res.status(400).json({ success: false, message: "Invalid start date" });
     }
-    if (end_date && Number.isNaN(Date.parse(end_date))) {
+    if (Object.hasOwn(req.body, "end_date") && !isDateOnly(end_date)) {
         return res.status(400).json({ success: false, message: "Invalid end date" });
     }
-    if (reason !== undefined && !reason.trim()) {
+    if (leave_type !== undefined && !["annual", "sick", "casual", "unpaid", "parental", "bereavement", "compensatory"].includes(leave_type)) {
+        return res.status(400).json({ success: false, message: "Choose a valid leave type" });
+    }
+    if (reason !== undefined && (typeof reason !== "string" || !reason.trim())) {
         return res.status(400).json({ success: false, message: "Reason cannot be empty" });
     }
-    const fields = Object.keys(req.body).filter((field) => ["start_date", "end_date", "reason"].includes(field));
+    const fields = Object.keys(req.body).filter((field) => ["start_date", "end_date", "reason", "leave_type"].includes(field));
     if (!fields.length) return res.status(400).json({ success: false, message: "No valid leave fields provided" });
     const current = await pool.query(
-        `SELECT l.start_date, l.end_date FROM leaves l
+        `SELECT l.employee_id, l.start_date, l.end_date FROM leaves l
          WHERE l.id = $1 AND l.status = 'pending'
            AND ($2::bigint IS NULL OR l.employee_id = $2)`,
         [req.params.id, employeeId]
@@ -101,6 +119,8 @@ const updateLeave = asyncHandler(async (req, res) => {
     if (new Date(nextEndDate) < new Date(nextStartDate)) {
         return res.status(400).json({ success: false, message: "End date cannot be before start date" });
     }
+    const overlap = await findOverlappingLeave(pool, current.rows[0].employee_id, nextStartDate, nextEndDate, req.params.id);
+    if (overlap.rowCount) return res.status(409).json({ success: false, message: "This request overlaps another pending or approved leave." });
     const values = fields.map((field) => field === "reason" ? reason.trim() : req.body[field]);
     const assignments = fields.map((field, index) => `${field} = $${index + 1}`).join(", ");
     values.push(req.params.id, employeeId);
@@ -149,12 +169,17 @@ const getLeaveBalances = asyncHandler(async (req, res) => {
 });
 
 const requestLeave = asyncHandler(async (req, res) => {
-    const { start_date, end_date, reason } = req.body;
+    if (req.user.role !== "employee") {
+        return res.status(403).json({ success: false, message: "Employees must submit their own leave requests." });
+    }
+    const { start_date, end_date, reason, leave_type } = req.body;
     if (!start_date || !end_date || !reason?.trim()) {
         return res.status(400).json({ success: false, message: "Start date, end date, and reason are required" });
     }
-    if (Number.isNaN(Date.parse(start_date)) || Number.isNaN(Date.parse(end_date)) ||
-        new Date(end_date) < new Date(start_date)) {
+    if (!["annual", "sick", "casual", "unpaid", "parental", "bereavement", "compensatory"].includes(leave_type || "annual")) {
+        return res.status(400).json({ success: false, message: "Choose a valid leave type" });
+    }
+    if (!isDateOnly(start_date) || !isDateOnly(end_date) || end_date < start_date) {
         return res.status(400).json({ success: false, message: "Provide valid dates and ensure end date is not before start date" });
     }
     const employeeId = req.user.role === "employee"
@@ -165,14 +190,33 @@ const requestLeave = asyncHandler(async (req, res) => {
             ? "Employee account is not linked"
             : "Choose a valid employee" });
     }
-    const employee = await pool.query("SELECT id FROM employees WHERE id = $1", [employeeId]);
-    if (!employee.rowCount) return res.status(400).json({ success: false, message: "Employee not found" });
-    const result = await pool.query(
-        `INSERT INTO leaves (employee_id, start_date, end_date, reason)
-         VALUES ($1, $2, $3, $4) RETURNING *`,
-        [employeeId, start_date, end_date, reason.trim()]
-    );
-    res.status(201).json({ success: true, data: result.rows[0] });
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [employeeId]);
+        const employee = await client.query("SELECT id FROM employees WHERE id = $1", [employeeId]);
+        if (!employee.rowCount) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({ success: false, message: "Employee profile is not linked" });
+        }
+        const overlap = await findOverlappingLeave(client, employeeId, start_date, end_date);
+        if (overlap.rowCount) {
+            await client.query("ROLLBACK");
+            return res.status(409).json({ success: false, message: "This request overlaps another pending or approved leave." });
+        }
+        const result = await client.query(
+            `INSERT INTO leaves (employee_id, start_date, end_date, reason, leave_type)
+             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [employeeId, start_date, end_date, reason.trim(), leave_type || "annual"]
+        );
+        await client.query("COMMIT");
+        res.status(201).json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+    } finally {
+        client.release();
+    }
 });
 
 const reviewLeave = asyncHandler(async (req, res) => {
@@ -196,6 +240,18 @@ const reviewLeave = asyncHandler(async (req, res) => {
         }
         const leave = request.rows[0];
         if (status === "approved") {
+            await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [leave.employee_id]);
+            const overlap = await client.query(
+                `SELECT id FROM leaves WHERE employee_id = $1 AND id <> $2
+                 AND status = 'approved' AND start_date <= $4 AND end_date >= $3 LIMIT 1`,
+                [leave.employee_id, leave.id, leave.start_date, leave.end_date]
+            );
+            if (overlap.rowCount) {
+                await client.query("ROLLBACK");
+                return res.status(409).json({ success: false, message: "Cannot approve: this leave overlaps an already approved request." });
+            }
+        }
+        if (status === "approved" && leave.leave_type !== "unpaid") {
             const dateKey = (value) => value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
             const leaveStart = dateKey(leave.start_date);
             const leaveEnd = dateKey(leave.end_date);

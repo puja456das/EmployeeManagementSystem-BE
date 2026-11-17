@@ -31,7 +31,7 @@ Run `npm run migrate` after updating to add announcement authors and private HR
 announcement recipients. Existing announcements without recipients remain visible
 to all workspaces.
 
-To send forgot-password verification codes, configure SMTP in the backend `.env`:
+For local development, email can use SMTP configured in the backend `.env`:
 
 ```env
 SMTP_HOST=smtp.office365.com
@@ -45,9 +45,22 @@ SMTP_TLS_CA_FILE=
 COMPANY_NAME=Employee Management System
 ```
 
+The platform provides separate Admin, HR, Employee, IT, Support, and Maintenance roles. Admin can provision service-team accounts from User access. IT, Support, and Maintenance roles only see requests for their own service category; employees and HR can create requests and track their own.
+
+Leave requests support annual, sick, casual, unpaid, parental, bereavement, and compensatory categories. Paid categories use the employee's shared paid-leave allowance; unpaid leave does not reduce that balance. Run `npm run migrate` after updating to add the service request queue and leave category fields.
+
+For Render Free, use Resend's HTTPS API because Render blocks outbound SMTP ports on free web services. Set these backend environment variables in Render (do not commit the API key):
+
+```env
+RESEND_API_KEY=re_your_sending_key
+RESEND_FROM=Employee Management System <you@your-verified-domain.com>
+```
+
+Verify the sending domain in Resend before using your own sender address. The API key takes precedence over SMTP when configured; local development can continue using SMTP by leaving `RESEND_API_KEY` unset. On an existing Render Blueprint, add these variables manually in the service's Environment settings.
+
 Set `FRONTEND_URL` to the browser-accessible frontend address (the Vite development
 server defaults to port `5174`). Employee and HR accounts are saved even if the
-invitation email cannot be delivered; after fixing SMTP, resend the setup email from
+invitation email cannot be delivered; after fixing the backend email provider, resend the setup email from
 the Employees page. Password reset uses
 a six-digit email code and does not require opening an email link. Do not commit `.env` or share
 SMTP credentials. After adding password recovery, run `npm run migrate` again to
@@ -80,9 +93,9 @@ The API listens on port `5000` by default.
 ## Authentication
 
 - `POST /api/auth/login` accepts `{ "email": "...", "password": "..." }`.
-- HR uses the HR account password created in User access and must select the HR workspace at sign-in. It is separate from any linked employee account password.
-- `POST /api/auth/register` creates a basic employee account and profile. It never allows public admin or HR registration.
-- `POST /api/auth/forgot-password` emails a six-digit verification code if the account exists (requires SMTP configuration).
+- Login checks the credentials and opens the matching role workspace automatically. If the same email is used for multiple roles, each account needs a different password.
+- Employee logins are created from an invitation; public self-registration is disabled.
+- `POST /api/auth/forgot-password` emails a six-digit verification code if the account exists (requires SMTP or Resend configuration).
 - `POST /api/auth/verify-reset-otp` accepts `{ "email": "...", "code": "123456" }`; codes expire after 10 minutes and allow at most five attempts.
 - `POST /api/auth/verify-employee-invite-otp` accepts `{ "email": "...", "code": "123456" }` to verify an employee's one-time account setup code.
 - `POST /api/auth/reset-password` accepts `{ "token": "...", "password": "..." }` to set a new password.
@@ -95,7 +108,7 @@ All routes are prefixed with `/api`.
 
 | Module | Endpoints |
 |---|---|
-| Auth (8) | `POST /auth/register`, `POST /auth/login`, `GET /auth/me`, `POST /auth/change-password`, `POST /auth/forgot-password`, `POST /auth/verify-reset-otp`, `POST /auth/verify-employee-invite-otp`, `POST /auth/reset-password` |
+| Auth (7) | `POST /auth/login`, `GET /auth/me`, `POST /auth/change-password`, `POST /auth/forgot-password`, `POST /auth/verify-reset-otp`, `POST /auth/verify-employee-invite-otp`, `POST /auth/reset-password` |
 | Users (9) | `GET/POST /users`, `GET/PUT/PATCH/DELETE /users/:id`, `GET /users/roles`, `PATCH /users/:id/role`, `POST /users/:id/reset-password` |
 | Employees (8) | `GET/POST /employees`, `GET/PUT/PATCH/DELETE /employees/:id`, `GET /employees/:id/photo`, `POST /employees/:id/invite` |
 | Departments (6) | `GET/POST /departments`, `GET/PATCH/DELETE /departments/:id`, `GET /departments/:id/employees` |
@@ -107,15 +120,16 @@ All routes are prefixed with `/api`.
 | Documents (5) | `GET/POST /documents`, `GET /documents/:id`, `GET /documents/:id/download`, `DELETE /documents/:id` |
 | Announcements (5) | `GET/POST /announcements`, `GET/PATCH/DELETE /announcements/:id` |
 | Holidays (5) | `GET/POST /holidays`, `GET/PATCH/DELETE /holidays/:id` |
+| Service requests (4) | `GET /service-requests`, `GET /service-requests/summary`, `POST /service-requests`, `PATCH /service-requests/:id` |
 
-These are 77 module endpoints. `GET /` and `GET /api/test-db` are two additional health endpoints.
+Service request routes are scoped by role and category. `GET /` and `GET /api/test-db` are two additional health endpoints.
 
 Employees can access their own attendance, leave, payroll, profile, and documents. Employee check-in and check-out can each be recorded once per workday; the API rejects duplicate punches. Admin and HR can view and manage organization-wide attendance and leave records; only admins can manage users and delete selected records.
 HR users with a linked employee profile can also check in/out directly from the HR Attendance page. Those self-service punches are restricted to the HR user's own linked profile. Employees and HR users can view their attendance by year, month, or specific date; days without either punch are displayed as absent, including weekends and holidays, starting from the employee's joining date.
 
 Creating an employee from the admin/HR employee form also creates a linked employee
 login and emails a branded, one-time six-digit account setup code (valid for 24 hours).
-Configure SMTP and `COMPANY_NAME` in `.env` first. The employee chooses their own
+Configure the backend email provider and `COMPANY_NAME` first. The employee chooses their own
 password; plaintext passwords are never emailed. Employee home address and emergency
 contact details are optional and available to authorized admin/HR users and the
 employee's own profile. Admin/HR can edit employee details later, add a bank account
@@ -124,25 +138,17 @@ can view their photo through `GET /api/profile/photo`. Profile photos must be JP
 PNG, or WebP images no larger than 5 MB and are stored in PostgreSQL. Aadhaar and PAN
 are intentionally not collected by this application.
 
-Admins can create separate admin/HR login credentials from **User Access** and
-optionally link the account to an existing employee ID. This reuses the employee
+Admins can create role-based HR, IT, Support, and Maintenance logins from **User Access**. HR logins can be linked to an existing employee ID. This reuses the employee
 record without creating a duplicate ID or changing the employee's work email.
 Create employee logins from **Employees** so each login is linked to its employee
 record; standalone employee accounts are rejected.
 Admins can also create a separate employee-portal login from **User Access** by
-choosing the employee role and linking an existing employee ID. For an HR profile,
-the employee login may use the same work email as the HR login; choose the Employee
-workspace and its separate password to access personal attendance. Other existing
-employee logins still need a unique login email.
+choosing the employee role and linking an existing employee ID. For an HR profile, the employee login may use the same work email as the HR login, but it must use a different password so automatic sign-in can identify the intended workspace.
 
 Each employee receives 12 paid-leave days per calendar year by default. Admin/HR
-can change the annual allowance in the employee form. Approved calendar days are
-deducted from that year's balance; unused days do not carry over. Approval is
-rejected if it would exceed the employee's annual allowance.
+can change the annual allowance in the employee form. Approved paid leave days use the employee's shared paid-leave allowance; unpaid leave does not reduce it. Unused days do not carry over. Approval is rejected if it would exceed the allowance.
 
-To activate an account, employees open the frontend, select **Set up employee account**,
-enter the work email and setup code from the welcome email, then create their own
-password. Setup codes are one-use and expire after 24 hours; five incorrect attempts
+To activate an employee account, open the setup link in the invitation email, enter the one-time code, then create a password. Public self-registration is disabled. Setup codes are one-use and expire after 24 hours; five incorrect attempts
 invalidate a code.
 
 Document uploads use multipart form data with a `file` field. PDF, JPG, PNG, and DOCX are accepted, up to 5 MB per file. HR/admin can add a document description and share one upload with multiple employees; each recipient gets a separately permission-scoped document record. Employee uploads remain private to the employee. Files are stored in PostgreSQL.

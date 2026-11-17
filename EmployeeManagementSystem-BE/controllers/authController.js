@@ -72,7 +72,7 @@ const login = asyncHandler(async (req, res) => {
     if (!identifier || !password) {
         return res.status(400).json({ success: false, message: "Email or employee ID and password are required" });
     }
-    if (role !== undefined && !["admin", "hr", "employee"].includes(role)) {
+    if (role !== undefined && !["admin", "hr", "employee", "it", "support", "maintenance"].includes(role)) {
         return res.status(400).json({ success: false, message: "Choose a valid workspace" });
     }
     const result = await pool.query(
@@ -86,13 +86,17 @@ const login = asyncHandler(async (req, res) => {
          ORDER BY CASE WHEN lower(u.email) = lower($1) THEN 0 ELSE 1 END, u.id`,
         [identifier, role || null]
     );
-    let user = null;
+    const matches = [];
     for (const candidate of result.rows) {
-        if (await bcrypt.compare(password, candidate.password_hash)) {
-            user = candidate;
-            break;
-        }
+        if (await bcrypt.compare(password, candidate.password_hash)) matches.push(candidate);
     }
+    if (!role && matches.length > 1) {
+        return res.status(409).json({
+            success: false,
+            message: "These credentials match more than one workspace. Ask your administrator to set a different password for each account."
+        });
+    }
+    const user = matches[0] || null;
     if (!user) {
         if (role && identifier.includes("@")) {
             const otherRoleResult = await pool.query(
@@ -150,7 +154,7 @@ const requestPasswordReset = asyncHandler(async (req, res) => {
     if (!email) {
         return res.status(400).json({ success: false, message: "Enter the email address for your account" });
     }
-    if (role !== undefined && !["admin", "hr", "employee"].includes(role)) {
+    if (role !== undefined && !["admin", "hr", "employee", "it", "support", "maintenance"].includes(role)) {
         return res.status(400).json({ success: false, message: "Choose a valid account type" });
     }
     const result = await pool.query(
@@ -223,7 +227,7 @@ const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
     if (!email || !/^\d{6}$/.test(code)) {
         return res.status(400).json({ success: false, message: "Enter the email address and 6-digit verification code" });
     }
-    if (role !== undefined && !["admin", "hr", "employee"].includes(role)) {
+    if (role !== undefined && !["admin", "hr", "employee", "it", "support", "maintenance"].includes(role)) {
         return res.status(400).json({ success: false, message: "Choose a valid account type" });
     }
     const userResult = await pool.query(

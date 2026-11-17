@@ -3,7 +3,7 @@ import { ChevronRight, Sparkles, Users } from "lucide-react";
 import { api } from "../../api.js";
 import heroImage from "../../assets/EMS.webp";
 
-export default function Login({ onLogin }) {
+export default function Login({ onLogin, onBack }) {
   const searchParams = new URLSearchParams(window.location.search);
   const setupRole = searchParams.get("workspace") === "hr" ? "hr" : "employee";
   const setupLink = searchParams.get("setup") === "employee";
@@ -32,7 +32,7 @@ export default function Login({ onLogin }) {
     event.preventDefault();
     setError("");
     setBusy(true);
-    try { onLogin(await api("/auth/login", { method: "POST", body: form })); }
+    try { onLogin(await api("/auth/login", { method: "POST", body: { email: form.email, password: form.password } })); }
     catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
@@ -106,12 +106,12 @@ export default function Login({ onLogin }) {
     : mode === "inviteOtp" ? `Set up ${setupRole === "hr" ? "HR" : "employee"} account`
     : mode === "verifyOtp" ? "Verify your email"
     : mode === "reset" ? isInvite ? "Set up your account" : "Choose a new password"
-      : "Sign in to your account";
+      : "Welcome back";
   const description = mode === "forgot" ? "Enter your work email and we’ll send a one-time verification code."
     : mode === "inviteOtp" ? `Enter the work email and one-time setup code from your ${setupRole === "hr" ? "HR" : "employee"} welcome email. The code is valid for 24 hours.`
     : mode === "verifyOtp" ? `Enter the 6-digit code sent to ${resetEmail} for your ${resetRole} account. The code expires in 10 minutes.`
     : mode === "reset" ? isInvite ? `Welcome to the team. Set a password to activate your ${setupRole === "hr" ? "HR" : "employee"} account.` : "Your new password must be at least 8 characters."
-        : "Enter your details to access your workspace.";
+        : "Use your work email or employee ID. Your account role opens the right workspace after sign in.";
   return (
     <div className="login-scene relative flex min-h-screen items-center justify-center px-3 py-5 sm:px-6 sm:py-8">
       <div className="login-card grid w-full max-w-[1120px] overflow-hidden rounded-[30px] border border-white/70 bg-white shadow-[0_30px_90px_rgba(20,33,68,0.22)] md:grid-cols-[1.05fr_.95fr]">
@@ -135,18 +135,17 @@ export default function Login({ onLogin }) {
           </div>
         </section>
         <section className="flex flex-col justify-center px-6 py-8 sm:px-10 sm:py-12 md:min-h-[680px] md:px-12 lg:px-14">
-          <div className="mb-7"><p className="text-[10px] font-bold uppercase tracking-[.18em] text-brand">{mode === "login" ? "TeamNest · Workspace access" : "Secure account setup"}</p><h2 className="mt-2 text-[26px] font-bold tracking-tight text-ink sm:text-[29px]">{title}</h2><p className="mt-2 text-xs leading-5 text-slate-500">{description}</p></div>
+          <div className="mb-7">{onBack && <button type="button" onClick={onBack} className="mb-5 text-xs font-semibold text-slate-500 hover:text-brand">← Back to home</button>}<p className="text-[10px] font-bold uppercase tracking-[.18em] text-brand">{mode === "login" ? "TeamNest · Workspace access" : "Secure account setup"}</p><h2 className="mt-2 text-[26px] font-bold tracking-tight text-ink sm:text-[29px]">{title}</h2><p className="mt-2 text-xs leading-5 text-slate-500">{description}</p></div>
           {mode === "login" &&           <form onSubmit={submit} className="space-y-6">
-            <label className="block text-xs font-semibold text-slate-600">Workspace<select required value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })} className="mt-2 h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-normal outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/10"><option value="">Choose your workspace</option><option value="employee">Employee</option><option value="hr">HR</option><option value="admin">System admin</option></select></label>
-            <label className="block text-xs font-semibold text-slate-600">{form.role === "hr" ? "HR login email" : form.role === "admin" ? "Admin login email" : "Work email or employee ID"}<input required type="text" autoComplete="username" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder={form.role === "employee" ? "you@company.com or EMP-123" : "you@company.com"} className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-4 text-sm font-normal outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/10" />{form.role === "hr" && <span className="mt-1 block text-[10px] font-normal text-slate-400">Use the HR account email and password assigned by your administrator. They are separate from your employee portal login.</span>}</label>
+            <label className="block text-xs font-semibold text-slate-600">Work email or employee ID<input required type="text" autoComplete="username" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="you@company.com or EMP-123" className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-4 text-sm font-normal outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/10" /></label>
             <label className="block text-xs font-semibold text-slate-600">Password<input required type="password" autoComplete="current-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Enter your password" className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-4 text-sm font-normal outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/10" /></label>
-            <div className="-mt-2 flex items-center justify-between gap-3"><button type="button" onClick={() => { setError(""); setNotice(""); setResetRole("employee"); setResetEmail(form.email.trim()); setMode("inviteOtp"); }} className="text-left text-[11px] font-semibold text-brand hover:underline">Set up employee account</button><button type="button" onClick={() => { setError(""); setNotice(""); setResetRole(form.role || "employee"); setResetEmail(form.email.trim()); setMode("forgot"); }} className="text-[11px] font-semibold text-brand hover:underline">Forgot password?</button></div>
+            <div className="-mt-2 flex items-center justify-between gap-3"><button type="button" onClick={() => { setError(""); setNotice(""); setResetRole(form.role || "employee"); setResetEmail(form.email.trim()); setMode("forgot"); }} className="text-[11px] font-semibold text-brand hover:underline">Forgot password?</button></div>
             {error && <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2.5 text-xs font-medium text-rose-700">{error}</p>}
             <button disabled={busy} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-brand text-sm font-bold text-white shadow-lg shadow-brand/20 transition hover:bg-[#5147d4] disabled:cursor-wait disabled:opacity-70">{busy ? "Signing you in…" : "Sign in"}{!busy && <ChevronRight size={17} />}</button>
           </form>}
           {(mode === "forgot" || mode === "verifyOtp" || mode === "inviteOtp") && <form onSubmit={mode === "forgot" ? requestReset : mode === "inviteOtp" ? verifyInviteCode : verifyResetCode} className="space-y-6">
             <label className="block text-xs font-semibold text-slate-600">Work email<input required type="email" autoComplete="email" disabled={mode === "verifyOtp" || (mode === "inviteOtp" && setupLink && Boolean(resetEmail))} value={resetEmail} onChange={(e) => setResetEmail(e.target.value)} placeholder="you@company.com" className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-4 text-sm font-normal outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/10 disabled:bg-slate-50 disabled:text-slate-500" /></label>
-            {mode === "forgot" && <label className="block text-xs font-semibold text-slate-600">Account type<select value={resetRole} onChange={(event) => setResetRole(event.target.value)} className="mt-2 h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-normal outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/10"><option value="employee">Employee</option><option value="hr">HR</option><option value="admin">System admin</option></select><span className="mt-1 block text-[10px] font-normal text-slate-400">Choose which workspace password you want to reset.</span></label>}
+            {mode === "forgot" && <label className="block text-xs font-semibold text-slate-600">Account type<select value={resetRole} onChange={(event) => setResetRole(event.target.value)} className="mt-2 h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-normal outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/10"><option value="employee">Employee</option><option value="hr">HR</option><option value="it">IT</option><option value="support">Support</option><option value="maintenance">Maintenance</option><option value="admin">System admin</option></select><span className="mt-1 block text-[10px] font-normal text-slate-400">Choose which workspace password you want to reset.</span></label>}
             {(mode === "verifyOtp" || mode === "inviteOtp") && <label className="block text-xs font-semibold text-slate-600">{mode === "inviteOtp" ? `${setupRole === "hr" ? "HR" : "Employee"} setup code` : "6-digit verification code"}<input required inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" value={mode === "inviteOtp" ? inviteCode : resetCode} onChange={(e) => mode === "inviteOtp" ? setInviteCode(e.target.value.replace(/\D/g, "").slice(0, 6)) : setResetCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter the 6-digit code from your email" className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-4 text-center text-lg font-bold tracking-[.35em] outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/10" /></label>}
             {error && <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2.5 text-xs font-medium text-rose-700">{error}</p>}
             <button disabled={busy} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-brand text-sm font-bold text-white shadow-lg shadow-brand/20 hover:bg-[#5147d4] disabled:opacity-70">{busy ? mode === "forgot" ? "Sending code…" : "Verifying code…" : mode === "forgot" ? "Send verification code" : mode === "inviteOtp" ? "Verify setup code" : "Verify code"}<ChevronRight size={17} /></button>

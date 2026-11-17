@@ -112,3 +112,21 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
     transition-duration: .01ms !important;
   }
 }
+
+.landing-page { isolation: isolate; }
+.landing-hero::before { content: ""; position: absolute; width: 50rem; height: 50rem; border-radius: 999px; top: -25rem; right: -22rem; background: radial-gradient(circle, rgba(192,225,174,.32), transparent 68%); pointer-events: none; }
+.landing-copy { animation: landing-rise .8s cubic-bezier(.2,.8,.2,1) both; }
+.landing-visual { animation: landing-rise .9s .1s cubic-bezier(.2,.8,.2,1) both; }
+.landing-highlight { background: linear-gradient(110deg,#4c8e62 15%,#94b946 55%,#6ba58a 90%); background-clip: text; -webkit-text-fill-color: transparent; }
+.landing-orb { position: absolute; border-radius: 999px; pointer-events: none; }
+.landing-orb-one { width: 20rem; height: 20rem; top: -4rem; right: 2rem; background: radial-gradient(circle,rgba(192,225,174,.48),transparent 70%); animation: landing-drift 9s ease-in-out infinite; }
+.landing-orb-two { width: 14rem; height: 14rem; bottom: -2rem; left: 0; background: radial-gradient(circle,rgba(207,227,216,.72),transparent 70%); animation: landing-drift 11s ease-in-out -3s infinite reverse; }
+.landing-bar { height: var(--bar-height); transform-origin: bottom; animation: landing-grow .75s var(--bar-delay) cubic-bezier(.2,.8,.2,1) both; }
+.landing-feature { animation: landing-rise .65s var(--feature-delay) ease-out both; }
+.landing-float { animation: landing-float 5s ease-in-out infinite; }
+.landing-float-right { animation-delay: -2.2s; }
+@keyframes landing-rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes landing-grow { from { transform: scaleY(.05); opacity: .4; } to { transform: scaleY(1); opacity: 1; } }
+@keyframes landing-drift { 0%,100% { transform: translate3d(0,0,0) scale(1); } 50% { transform: translate3d(12px,-16px,0) scale(1.04); } }
+@keyframes landing-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+@media (prefers-reduced-motion: reduce) { .landing-copy,.landing-visual,.landing-feature,.landing-bar,.landing-float,.landing-orb { animation: none !important; } }

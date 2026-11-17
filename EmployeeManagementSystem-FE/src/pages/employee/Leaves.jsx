@@ -6,7 +6,7 @@ import { ErrorBanner, MiniMetric, StatusBadge } from "../../components/ui.jsx";
 import RecordDialog from "../../components/RecordDialog.jsx";
 import RecordTable from "../../components/RecordTable.jsx";
 
-const blank = { start_date: "", end_date: "", reason: "" };
+const blank = { start_date: "", end_date: "", reason: "", leave_type: "annual" };
 
 export default function Leaves() {
   const [leaves, setLeaves] = useState([]);
@@ -34,7 +34,7 @@ export default function Leaves() {
     setEditing(leave);
     setForm(leave ? {
       start_date: String(leave.start_date || "").slice(0, 10),
-      end_date: String(leave.end_date || "").slice(0, 10), reason: leave.reason || ""
+      end_date: String(leave.end_date || "").slice(0, 10), reason: leave.reason || "", leave_type: leave.leave_type || "annual"
     } : blank);
     setOpen(true);
   };
@@ -59,6 +59,7 @@ export default function Leaves() {
     {error && <ErrorBanner message={error} retry={loadLeaves} />}
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><MiniMetric title="Total requests" value={leaves.length} color="violet" /><MiniMetric title="Pending review" value={leaves.filter((leave) => leave.status === "pending").length} color="amber" /><MiniMetric title="Approved" value={leaves.filter((leave) => leave.status === "approved").length} color="green" /><MiniMetric title={`Paid leave left · ${balance?.year || new Date().getFullYear()}`} value={`${balance?.remaining_days ?? "—"} / ${balance?.allocated_days ?? "—"} days`} color="blue" /></div>
     <RecordTable title="My requests" rows={leaves} loading={loading} error="" search={search} onSearch={setSearch} columns={[
+      { label: "Type", render: (row) => (row.leave_type || "annual").replace("_", " ") },
       { label: "From", render: (row) => dateLabel(row.start_date) },
       { label: "To", render: (row) => dateLabel(row.end_date) },
       { label: "Days", render: (row) => row.requested_days ?? "—" },
@@ -67,6 +68,7 @@ export default function Leaves() {
       { label: "Actions", render: (row) => row.status === "pending" ? <div className="flex justify-end gap-1"><button onClick={() => openForm(row)} title="Edit request" className="rounded-lg p-2 text-slate-400 hover:bg-violet-50 hover:text-brand"><Pencil size={14} /></button><button onClick={() => cancel(row)} title="Cancel request" className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><X size={14} /></button></div> : "—" }
     ]} />
     {open && <RecordDialog title={editing ? "Edit leave request" : "Request leave"} onClose={() => setOpen(false)} onSubmit={save} saving={saving} error={error}>
+      <label className="block text-[10px] font-bold text-slate-600">Leave type<select required value={form.leave_type} onChange={(event) => setForm({ ...form, leave_type: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs">{[["annual","Annual"],["sick","Sick"],["casual","Casual"],["unpaid","Unpaid"],["parental","Parental"],["bereavement","Bereavement"],["compensatory","Compensatory"]].map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select><span className="mt-1 block text-[9px] font-normal text-slate-400">Paid leave types share the paid-leave allowance; unpaid leave does not use it.</span></label>
       <label className="block text-[10px] font-bold text-slate-600">Start date<input required type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-normal" /></label>
       <label className="block text-[10px] font-bold text-slate-600">End date<input required type="date" min={form.start_date} value={form.end_date} onChange={(event) => setForm({ ...form, end_date: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-normal" /></label>
       <label className="block text-[10px] font-bold text-slate-600 sm:col-span-2">Reason<textarea required rows={3} value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-normal" /></label>

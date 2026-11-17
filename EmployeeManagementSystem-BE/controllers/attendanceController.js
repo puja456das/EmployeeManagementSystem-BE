@@ -2,6 +2,11 @@ const pool = require("../config/db");
 const asyncHandler = require("../utils/asyncHandler");
 const { getEmployeeIdForUser } = require("../utils/employeeAccount");
 
+const isDateOnly = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    Number.isFinite(new Date(`${value}T00:00:00.000Z`).getTime()) &&
+    new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
+const isValidTimestamp = (value) => Number.isFinite(new Date(value).getTime());
+
 const findEmployeeId = async (req) => {
     if (req.user.role === "hr" || req.user.role === "employee") {
         return getEmployeeIdForUser(req.user.id);
@@ -16,7 +21,7 @@ const parseAttendancePeriod = (query) => {
     const parsedDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date)
         ? new Date(`${date}T00:00:00Z`)
         : null;
-    if (!Number.isInteger(year) || year < 1900 || year > 9999) {
+    if (!Number.isInteger(year) || year < 1900 || year > 9998) {
         return { error: "Choose a valid attendance year" };
     }
     if (month !== null && (!Number.isInteger(month) || month < 1 || month > 12)) {
@@ -126,21 +131,26 @@ const updateAttendance = asyncHandler(async (req, res) => {
     const allowed = new Set(["work_date", "check_in", "check_out", "status"]);
     const fields = Object.keys(req.body).filter((field) => allowed.has(field));
     if (!fields.length) return res.status(400).json({ success: false, message: "No valid attendance fields provided" });
-    if (req.body.work_date && Number.isNaN(Date.parse(req.body.work_date))) {
+    if (Object.hasOwn(req.body, "work_date") && !isDateOnly(req.body.work_date)) {
         return res.status(400).json({ success: false, message: "Provide a valid work date" });
     }
     for (const [label, value] of [["Check-in", req.body.check_in], ["Check-out", req.body.check_out]]) {
-        if (value && Number.isNaN(Date.parse(value))) {
+        if (value && !isValidTimestamp(value)) {
             return res.status(400).json({ success: false, message: `${label} must be a valid date and time` });
         }
     }
-    if (req.body.check_in && req.body.check_out && new Date(req.body.check_out) < new Date(req.body.check_in)) {
+    const existing = await pool.query("SELECT check_in, check_out FROM attendance WHERE id = $1", [req.params.id]);
+    if (!existing.rowCount) return res.status(404).json({ success: false, message: "Attendance record not found" });
+    const nextCheckIn = Object.hasOwn(req.body, "check_in") ? req.body.check_in : existing.rows[0].check_in;
+    const nextCheckOut = Object.hasOwn(req.body, "check_out") ? req.body.check_out : existing.rows[0].check_out;
+    if (nextCheckIn && nextCheckOut && new Date(nextCheckOut) < new Date(nextCheckIn)) {
         return res.status(400).json({ success: false, message: "Check-out cannot be before check-in" });
     }
-    if (req.body.status && !["present", "absent", "late", "half-day"].includes(req.body.status)) {
+    if (Object.hasOwn(req.body, "status") && !["present", "absent", "late", "half-day"].includes(req.body.status)) {
         return res.status(400).json({ success: false, message: "Invalid attendance status" });
     }
-    const values = fields.map((field) => req.body[field]);
+    if (req.body.status === "absent" && (nextCheckIn || nextCheckOut)) return res.status(400).json({ success: false, message: "An absent record cannot have check-in or check-out times" });
+    const values = fields.map((field) => ["check_in", "check_out"].includes(field) && req.body[field] === "" ? null : req.body[field]);
     const assignments = fields.map((field, index) => `${field} = $${index + 1}`).join(", ");
     values.push(req.params.id);
     const result = await pool.query(
@@ -157,17 +167,18 @@ const createAttendance = asyncHandler(async (req, res) => {
     if (!Number.isSafeInteger(employeeId) || employeeId < 1) {
         return res.status(400).json({ success: false, message: "Choose a valid employee" });
     }
-    if (work_date && Number.isNaN(Date.parse(work_date))) {
+    if (work_date && !isDateOnly(work_date)) {
         return res.status(400).json({ success: false, message: "Provide a valid work date" });
     }
     for (const [label, value] of [["Check-in", check_in], ["Check-out", check_out]]) {
-        if (value && Number.isNaN(Date.parse(value))) {
+        if (value && !isValidTimestamp(value)) {
             return res.status(400).json({ success: false, message: `${label} must be a valid date and time` });
         }
     }
     if (check_in && check_out && new Date(check_out) < new Date(check_in)) {
         return res.status(400).json({ success: false, message: "Check-out cannot be before check-in" });
     }
+    if (status === "absent" && (check_in || check_out)) return res.status(400).json({ success: false, message: "An absent record cannot have check-in or check-out times" });
     if (status && !["present", "absent", "late", "half-day"].includes(status)) {
         return res.status(400).json({ success: false, message: "Invalid attendance status" });
     }
@@ -195,6 +206,10 @@ const getAttendanceSummary = asyncHandler(async (req, res) => {
     if (req.user.role === "employee" && !employeeId) {
         return res.status(404).json({ success: false, message: "Employee account is not linked" });
     }
+    const startDate = req.query.start_date || null;
+    const endDate = req.query.end_date || null;
+    if ((startDate && !isDateOnly(startDate)) || (endDate && !isDateOnly(endDate))) return res.status(400).json({ success: false, message: "Provide valid start and end dates" });
+    if (startDate && endDate && startDate > endDate) return res.status(400).json({ success: false, message: "Start date cannot be after end date" });
     const result = await pool.query(
         `SELECT COUNT(*)::int AS total_days,
                 COUNT(*) FILTER (WHERE status = 'present')::int AS present_days,
@@ -206,7 +221,7 @@ const getAttendanceSummary = asyncHandler(async (req, res) => {
          WHERE ($1::bigint IS NULL OR employee_id = $1)
            AND work_date >= COALESCE($2::date, date_trunc('month', CURRENT_DATE)::date)
            AND work_date <= COALESCE($3::date, CURRENT_DATE)`,
-        [employeeId, req.query.start_date || null, req.query.end_date || null]
+        [employeeId, startDate, endDate]
     );
     res.json({ success: true, data: result.rows[0] });
 });
@@ -236,7 +251,7 @@ const checkIn = asyncHandler(async (req, res) => {
 
 const checkOut = asyncHandler(async (req, res) => {
     const employeeId = await findEmployeeId(req);
-    if (!employeeId) return res.status(400).json({ success: false, message: "Employee account is not linked" });
+    if (!Number.isSafeInteger(employeeId) || employeeId < 1) return res.status(400).json({ success: false, message: "Employee account is not linked" });
     const result = await pool.query(
         "UPDATE attendance SET check_out = NOW() WHERE employee_id = $1 AND work_date = CURRENT_DATE AND check_in IS NOT NULL AND check_out IS NULL RETURNING *",
         [employeeId]

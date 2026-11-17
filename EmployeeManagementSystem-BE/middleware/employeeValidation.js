@@ -4,7 +4,9 @@ const validateEmployee = [
     body("name")
         .trim()
         .notEmpty()
-        .withMessage("Employee name is required"),
+        .withMessage("Employee name is required")
+        .isLength({ max: 150 })
+        .withMessage("Employee name must be 150 characters or fewer"),
 
     body("email")
         .trim()
@@ -25,7 +27,20 @@ const validateEmployee = [
         .notEmpty()
         .withMessage("Salary is required")
         .isFloat({ min: 0 })
-        .withMessage("Salary must be a valid non-negative number"),
+        .withMessage("Salary must be a valid non-negative number")
+        .custom((value) => Number(value) <= 9999999999.99 && Math.abs(Math.round(Number(value) * 100) - Number(value) * 100) < 1e-7)
+        .withMessage("Salary cannot exceed 9,999,999,999.99 or have more than two decimal places"),
+
+    body("joining_date")
+        .optional({ values: "falsy" })
+        .matches(/^\d{4}-\d{2}-\d{2}$/)
+        .custom((value) => new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value)
+        .withMessage("Joining date must be a valid calendar date"),
+
+    body("status")
+        .optional()
+        .isIn(["Active", "Inactive"])
+        .withMessage("Choose Active or Inactive status"),
 
     body("annual_paid_leave_days")
         .optional({ values: "falsy" })

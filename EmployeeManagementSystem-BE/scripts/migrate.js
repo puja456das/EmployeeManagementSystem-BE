@@ -16,6 +16,9 @@ const migrate = async () => {
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
+            ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+            ALTER TABLE users ADD CONSTRAINT users_role_check
+                CHECK (role IN ('admin', 'hr', 'employee', 'it', 'support', 'maintenance'));
 
             ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;
             CREATE UNIQUE INDEX IF NOT EXISTS users_role_email_key ON users (lower(email), role);
@@ -127,7 +130,28 @@ const migrate = async () => {
             ALTER TABLE leaves DROP CONSTRAINT IF EXISTS leaves_status_check;
             ALTER TABLE leaves ADD CONSTRAINT leaves_status_check
                 CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled'));
+            ALTER TABLE leaves ADD COLUMN IF NOT EXISTS leave_type VARCHAR(24) NOT NULL DEFAULT 'annual';
+            ALTER TABLE leaves DROP CONSTRAINT IF EXISTS leaves_leave_type_check;
+            ALTER TABLE leaves ADD CONSTRAINT leaves_leave_type_check
+                CHECK (leave_type IN ('annual', 'sick', 'casual', 'unpaid', 'parental', 'bereavement', 'compensatory'));
 
+            CREATE TABLE IF NOT EXISTS service_requests (
+                id BIGSERIAL PRIMARY KEY,
+                requester_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                assigned_to_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+                category VARCHAR(20) NOT NULL CHECK (category IN ('it', 'support', 'maintenance')),
+                title VARCHAR(180) NOT NULL,
+                description TEXT NOT NULL,
+                priority VARCHAR(12) NOT NULL DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+                status VARCHAR(20) NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'resolved', 'closed')),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                resolved_at TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS service_requests_category_status_created_idx
+                ON service_requests(category, status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS service_requests_requester_created_idx
+                ON service_requests(requester_user_id, created_at DESC);
             CREATE TABLE IF NOT EXISTS payroll (
                 id BIGSERIAL PRIMARY KEY,
                 employee_id BIGINT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,

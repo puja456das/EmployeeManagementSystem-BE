@@ -13,6 +13,8 @@ const employeeSelection = `id, employee_code, user_id, name, email, department, 
 
 const isHrDepartment = (name) => ["hr", "human resources", "human resource"]
     .includes(String(name || "").trim().toLowerCase());
+const isValidDateOnly = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    Number.isFinite(new Date(`${value}T00:00:00.000Z`).getTime()) && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
 
 const resolveDepartment = async (client, departmentId, departmentName) => {
     if (departmentId !== undefined && departmentId !== null && departmentId !== "") {
@@ -301,6 +303,11 @@ const updateEmployee = asyncHandler(async (req, res) => {
     try {
         await client.query("BEGIN");
         const selectedDepartment = await resolveDepartment(client, req.body.department_id, department);
+        if (selectedDepartment.name?.trim().toLowerCase() === "admin") {
+            const error = new Error("Employees cannot be assigned to the Admin department");
+            error.status = 400;
+            throw error;
+        }
         const result = await client.query(
             `UPDATE employees
              SET name = $1, email = $2, department = $3, department_id = $4, salary = $5, phone = $6,
@@ -348,6 +355,24 @@ const updateEmployee = asyncHandler(async (req, res) => {
 
 const patchEmployee = asyncHandler(async (req, res) => {
     const profileImageMime = validateProfileImage(req.file);
+    const textLimits = { name: 150, department: 150, designation: 150, phone: 40, emergency_contact_name: 150, emergency_contact_phone: 40 };
+    for (const [field, max] of Object.entries(textLimits)) {
+        if (req.body[field] !== undefined && (!String(req.body[field]).trim() || String(req.body[field]).length > max)) {
+            return res.status(400).json({ success: false, message: `${field.replaceAll("_", " ")} is required and must be ${max} characters or fewer` });
+        }
+    }
+    if (req.body.email !== undefined && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(req.body.email).trim()) || String(req.body.email).length > 255)) {
+        return res.status(400).json({ success: false, message: "Provide a valid work email (up to 255 characters)" });
+    }
+    if (req.body.salary !== undefined && (!Number.isFinite(Number(req.body.salary)) || Number(req.body.salary) < 0 || Number(req.body.salary) > 9999999999.99 || Math.abs(Math.round(Number(req.body.salary) * 100) - Number(req.body.salary) * 100) >= 1e-7)) {
+        return res.status(400).json({ success: false, message: "Salary must be non-negative with at most two decimal places" });
+    }
+    if (req.body.joining_date !== undefined && req.body.joining_date !== "" && !isValidDateOnly(req.body.joining_date)) {
+        return res.status(400).json({ success: false, message: "Joining date must be a valid calendar date" });
+    }
+    if (req.body.status !== undefined && !["Active", "Inactive"].includes(req.body.status)) {
+        return res.status(400).json({ success: false, message: "Choose Active or Inactive status" });
+    }
     if (req.body.annual_paid_leave_days !== undefined &&
         (!Number.isInteger(Number(req.body.annual_paid_leave_days)) ||
             Number(req.body.annual_paid_leave_days) < 0 ||
@@ -382,6 +407,11 @@ const patchEmployee = asyncHandler(async (req, res) => {
         await client.query("BEGIN");
         if (hasDepartment) {
             const selectedDepartment = await resolveDepartment(client, req.body.department_id, req.body.department);
+            if (selectedDepartment.name?.trim().toLowerCase() === "admin") {
+                const error = new Error("Employees cannot be assigned to the Admin department");
+                error.status = 400;
+                throw error;
+            }
             fields.push("department", "department_id");
             values.push(selectedDepartment.name, selectedDepartment.id);
         }

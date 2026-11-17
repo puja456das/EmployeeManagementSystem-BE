@@ -1,6 +1,16 @@
 const pool = require("../config/db");
 const asyncHandler = require("../utils/asyncHandler");
+const path = require("path");
 const { getEmployeeIdForUser } = require("../utils/employeeAccount");
+
+const hasValidFileSignature = (file) => {
+    const data = file.buffer;
+    if (file.mimetype === "application/pdf") return data.subarray(0, 5).toString("ascii") === "%PDF-";
+    if (file.mimetype === "image/jpeg") return data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+    if (file.mimetype === "image/png") return data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    if (file.mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return data[0] === 0x50 && data[1] === 0x4b;
+    return false;
+};
 
 const listDocuments = asyncHandler(async (req, res) => {
     const employeeId = req.user.role === "employee" ? await getEmployeeIdForUser(req.user.id) : null;
@@ -25,6 +35,8 @@ const listDocuments = asyncHandler(async (req, res) => {
 
 const uploadDocument = asyncHandler(async (req, res) => {
     if (!req.file) return res.status(400).json({ success: false, message: "Choose a file to upload" });
+    if (!hasValidFileSignature(req.file)) return res.status(400).json({ success: false, message: "The file contents do not match the selected file type" });
+    const originalName = path.basename(String(req.file.originalname || "document")).replace(/[\r\n\0]/g, "").slice(0, 255) || "document";
     const description = String(req.body.description || "").trim();
     if (description.length > 500) {
         return res.status(400).json({ success: false, message: "Document description must be 500 characters or fewer" });
@@ -74,7 +86,7 @@ const uploadDocument = asyncHandler(async (req, res) => {
              SELECT recipient.employee_id, $2, $3, $4, $5
              FROM unnest($1::bigint[]) AS recipient(employee_id)
              RETURNING id, employee_id, original_name, mime_type, description, created_at`,
-            [employeeIds, req.file.originalname, req.file.mimetype, req.file.buffer, description || null]
+            [employeeIds, originalName, req.file.mimetype, req.file.buffer, description || null]
         );
         await client.query("COMMIT");
         res.status(201).json({ success: true, data: result.rows, count: result.rowCount });

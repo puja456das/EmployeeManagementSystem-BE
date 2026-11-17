@@ -17,7 +17,8 @@ const routeModules = {
     profile: require("./routes/profileRoutes"),
     documents: require("./routes/documentRoutes"),
     announcements: require("./routes/announcementRoutes"),
-    holidays: require("./routes/holidayRoutes")
+    holidays: require("./routes/holidayRoutes"),
+    "service-requests": require("./routes/serviceRequestRoutes")
 };
 
 const app = express();

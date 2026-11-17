@@ -26,7 +26,10 @@ export default function ProfileEditor({ user }) {
   const roleLabel = {
     admin: "Workspace administrator",
     hr: "HR team member",
-    employee: "Employee"
+    employee: "Employee",
+    it: "IT operations",
+    support: "Support team",
+    maintenance: "Maintenance team"
   }[profile?.role || user.role] || "Team member";
   const employeeFacts = [
     profile?.employee_code && { label: "Employee ID", value: profile.employee_code },

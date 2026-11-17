@@ -7,7 +7,7 @@ export default function WorkspaceLayout({ user, active, allowedItems, onNavigate
   const isEmployee = user.role === "employee";
   const isHr = user.role === "hr";
   const navigate = onNavigate;
-  const workspaceLabel = isEmployee ? "Employee workspace" : isHr ? "HR workspace" : "Admin console";
+  const workspaceLabel = ({ admin: "Admin console", hr: "HR workspace", employee: "Employee workspace", it: "IT workspace", support: "Support workspace", maintenance: "Maintenance workspace" })[user.role] || "Operations workspace";
   const activeLabel = allowedItems.find((item) => item.id === active)?.label || "Dashboard";
 
   return (
@@ -22,11 +22,11 @@ export default function WorkspaceLayout({ user, active, allowedItems, onNavigate
         <div className={`mx-4 mt-2 rounded-2xl p-3 ${isEmployee ? "border border-white/10 bg-white/[0.06]" : isHr ? "border border-emerald-100 bg-emerald-50/70" : "border border-indigo-100 bg-indigo-50/70"}`}>
           <div className="flex items-center gap-3">
             <div className={`grid h-9 w-9 place-items-center rounded-full text-xs font-bold uppercase ${isEmployee ? "bg-gradient-to-br from-amber-300 to-orange-400 text-orange-950" : isHr ? "bg-gradient-to-br from-emerald-100 to-teal-200 text-emerald-800" : "bg-gradient-to-br from-indigo-100 to-violet-200 text-indigo-700"}`}>{initials(user.name)}</div>
-            <div className="min-w-0 flex-1"><p className={`truncate text-xs font-bold ${isEmployee ? "text-white" : "text-ink"}`}>{user.name}</p><p className={`mt-0.5 text-[10px] capitalize ${isEmployee ? "text-indigo-200/65" : "text-slate-400"}`}>{isEmployee ? "Your employee account" : isHr ? "Human resources" : "System administrator"}</p></div>
+            <div className="min-w-0 flex-1"><p className={`truncate text-xs font-bold ${isEmployee ? "text-white" : "text-ink"}`}>{user.name}</p><p className={`mt-0.5 text-[10px] capitalize ${isEmployee ? "text-indigo-200/65" : "text-slate-400"}`}>{({ admin: "System administrator", hr: "Human resources", employee: "Your employee account", it: "IT operations", support: "Service support", maintenance: "Facilities and maintenance" })[user.role] || "Team operations"}</p></div>
             {!isEmployee && <ChevronDown size={15} className="text-slate-400" />}
           </div>
         </div>
-        <p className={`mb-2 mt-7 px-6 text-[10px] font-bold uppercase tracking-[.15em] ${isEmployee ? "text-indigo-200/50" : isHr ? "text-emerald-700/55" : "text-slate-400"}`}>{isEmployee ? "Your workspace" : isHr ? "HR workspace" : "System workspace"}</p>
+        <p className={`mb-2 mt-7 px-6 text-[10px] font-bold uppercase tracking-[.15em] ${isEmployee ? "text-indigo-200/50" : isHr ? "text-emerald-700/55" : "text-slate-400"}`}>{({ admin: "System workspace", hr: "HR workspace", employee: "Your workspace", it: "IT queue", support: "Support queue", maintenance: "Maintenance queue" })[user.role] || "Operations"}</p>
         <nav className="scrollbar-thin flex-1 space-y-1 overflow-y-auto px-3">
           {allowedItems.map(({ id, label, icon: Icon }) => (
             <button key={id} onClick={() => { navigate(id); setMobileMenu(false); }} className={`group flex w-full items-center gap-3 rounded-xl px-3 py-[11px] text-left text-[13px] font-semibold transition ${active === id ? isEmployee ? "bg-gradient-to-r from-cyan-400/20 to-violet-400/20 text-cyan-100 ring-1 ring-white/10" : isHr ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-100" : "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100" : isEmployee ? "text-indigo-100/70 hover:bg-white/[0.07] hover:text-white" : isHr ? "text-slate-500 hover:bg-emerald-50 hover:text-emerald-800" : "text-slate-500 hover:bg-indigo-50/70 hover:text-indigo-700"}`}>

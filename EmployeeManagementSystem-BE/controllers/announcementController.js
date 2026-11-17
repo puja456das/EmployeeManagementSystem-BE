@@ -1,6 +1,14 @@
 const pool = require("../config/db");
 const asyncHandler = require("../utils/asyncHandler");
 
+const parseAnnouncementDates = (body) => {
+    const publishedAt = body.published_at ? new Date(body.published_at) : null;
+    const expiresAt = body.expires_at ? new Date(body.expires_at) : null;
+    if ((body.published_at && !Number.isFinite(publishedAt.getTime())) || (body.expires_at && !Number.isFinite(expiresAt.getTime()))) return "Publish and expiry dates must be valid date/time values";
+    if (publishedAt && expiresAt && expiresAt <= publishedAt) return "Expiry must be later than the publish time";
+    return null;
+};
+
 const announcementSelection = `
     SELECT a.id, a.title, a.body, a.published_at, a.expires_at, a.created_at,
            a.created_by_user_id, creator.name AS created_by_name,
@@ -14,7 +22,7 @@ const announcementSelection = `
 const list = asyncHandler(async (req, res) => {
     const result = await pool.query(
         `${announcementSelection}
-         WHERE $1 = 'admin'
+         WHERE ($1 = 'admin'
             OR NOT EXISTS (
                 SELECT 1 FROM announcement_recipients existing
                 WHERE existing.announcement_id = a.id
@@ -22,7 +30,8 @@ const list = asyncHandler(async (req, res) => {
             OR ($1 = 'hr' AND EXISTS (
                 SELECT 1 FROM announcement_recipients targeted
                 WHERE targeted.announcement_id = a.id AND targeted.user_id = $2
-            ))
+            )))
+           AND ($1 = 'admin' OR (a.published_at <= NOW() AND (a.expires_at IS NULL OR a.expires_at > NOW())))
          GROUP BY a.id, creator.name
          ORDER BY a.published_at DESC`,
         [req.user.role, req.user.id]
@@ -34,6 +43,7 @@ const get = asyncHandler(async (req, res) => {
     const result = await pool.query(
         `${announcementSelection}
          WHERE a.id = $1
+           AND ($2 = 'admin' OR (a.published_at <= NOW() AND (a.expires_at IS NULL OR a.expires_at > NOW())))
            AND ($2 = 'admin'
                 OR NOT EXISTS (
                     SELECT 1 FROM announcement_recipients existing
@@ -82,7 +92,9 @@ const validateHrRecipients = async (client, recipientIds) => {
 const create = asyncHandler(async (req, res) => {
     const title = String(req.body.title || "").trim();
     const body = String(req.body.body || "").trim();
-    if (!title || !body) return res.status(400).json({ success: false, message: "Title and announcement are required" });
+    if (!title || title.length > 200 || !body || body.length > 20000) return res.status(400).json({ success: false, message: "Title is required (up to 200 characters) and announcement must be up to 20,000 characters" });
+    const dateError = parseAnnouncementDates(req.body);
+    if (dateError) return res.status(400).json({ success: false, message: dateError });
 
     const client = await pool.connect();
     try {
@@ -116,13 +128,15 @@ const create = asyncHandler(async (req, res) => {
 const update = asyncHandler(async (req, res) => {
     const title = String(req.body.title || "").trim();
     const body = String(req.body.body || "").trim();
-    if (!title || !body) return res.status(400).json({ success: false, message: "Title and announcement are required" });
+    if (!title || title.length > 200 || !body || body.length > 20000) return res.status(400).json({ success: false, message: "Title is required (up to 200 characters) and announcement must be up to 20,000 characters" });
+    const dateError = parseAnnouncementDates(req.body);
+    if (dateError) return res.status(400).json({ success: false, message: dateError });
 
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
         const existing = await client.query(
-            "SELECT id, created_by_user_id FROM announcements WHERE id = $1 FOR UPDATE",
+            "SELECT id, created_by_user_id, published_at FROM announcements WHERE id = $1 FOR UPDATE",
             [req.params.id]
         );
         if (!existing.rowCount) {
@@ -132,6 +146,12 @@ const update = asyncHandler(async (req, res) => {
         if (String(existing.rows[0].created_by_user_id) !== String(req.user.id)) {
             await client.query("ROLLBACK");
             return res.status(403).json({ success: false, message: "You can only edit announcements you created" });
+        }
+        const effectivePublish = req.body.published_at ? new Date(req.body.published_at) : new Date(existing.rows[0].published_at);
+        const effectiveExpiry = req.body.expires_at ? new Date(req.body.expires_at) : null;
+        if (effectiveExpiry && effectiveExpiry <= effectivePublish) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({ success: false, message: "Expiry must be later than the publish time" });
         }
         const recipientIds = req.user.role === "admin"
             ? await validateHrRecipients(client, req.body.recipient_ids)

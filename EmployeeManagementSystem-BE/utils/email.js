@@ -34,6 +34,42 @@ const createMailTransport = () => {
     });
 };
 
+const deliverEmail = async (message) => {
+    const apiKey = String(process.env.RESEND_API_KEY || "").trim();
+    if (apiKey) {
+        const from = String(process.env.RESEND_FROM || "").trim();
+        if (!from) {
+            const error = new Error("RESEND_FROM must be set when RESEND_API_KEY is configured.");
+            error.code = "RESEND_NOT_CONFIGURED";
+            throw error;
+        }
+        let response;
+        try {
+            response = await fetch("https://api.resend.com/emails", {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ ...message, from })
+            });
+        } catch (cause) {
+            const error = new Error("Could not connect to the Resend email API.");
+            error.code = "RESEND_NETWORK_ERROR";
+            throw error;
+        }
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const error = new Error(result.message || result.name || `Resend API returned HTTP ${response.status}.`);
+            error.code = "RESEND_API_ERROR";
+            throw error;
+        }
+        return result;
+    }
+    const transporter = createMailTransport();
+    return transporter.sendMail(message);
+};
+
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 })[character]);
@@ -43,9 +79,8 @@ const sendEmployeeInvite = async (user, employee, code, role = "employee") => {
     const accountType = role === "hr" ? "HR" : "employee";
     const workspace = role === "hr" ? "&workspace=hr" : "";
     const setupUrl = `${getFrontendUrl()}/?setup=employee&email=${encodeURIComponent(user.email)}${workspace}`;
-    const transporter = createMailTransport();
     try {
-        await transporter.sendMail({
+        await deliverEmail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
             to: user.email,
             subject: `Set up your ${companyName} ${accountType} account`,
@@ -54,7 +89,7 @@ const sendEmployeeInvite = async (user, employee, code, role = "employee") => {
         });
     } catch (cause) {
         console.error("Employee invitation email delivery failed:", cause.message);
-        let message = "The invitation email could not be delivered. Check the backend terminal for the SMTP error, verify SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_SECURE in the backend .env, then restart the backend.";
+        let message = "The invitation email could not be delivered. Check the backend logs. On Render Free, configure RESEND_API_KEY and RESEND_FROM; SMTP ports are blocked there.";
         if (cause.code === "EMAIL_NOT_CONFIGURED") {
             message = cause.message;
         } else if (cause.code === "EAUTH") {
@@ -69,9 +104,8 @@ const sendEmployeeInvite = async (user, employee, code, role = "employee") => {
 const sendPasswordReset = async (user, token) => {
     const companyName = getCompanyName();
     const resetUrl = `${getFrontendUrl()}/?resetToken=${encodeURIComponent(token)}`;
-    const transporter = createMailTransport();
     try {
-        await transporter.sendMail({
+        await deliverEmail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
             to: user.email,
             subject: `Reset your ${companyName} password`,
@@ -83,7 +117,7 @@ const sendPasswordReset = async (user, token) => {
         const error = new Error(
             cause.code === "EMAIL_NOT_CONFIGURED"
                 ? cause.message
-                : "Password reset email could not be delivered. Verify SMTP settings and restart the backend."
+                : "Password reset email could not be delivered. Check the backend logs and verify the Resend or SMTP configuration."
         );
         error.status = 503;
         throw error;
@@ -92,9 +126,8 @@ const sendPasswordReset = async (user, token) => {
 
 const sendPasswordResetOtp = async (user, code) => {
     const companyName = getCompanyName();
-    const transporter = createMailTransport();
     try {
-        await transporter.sendMail({
+        await deliverEmail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
             to: user.email,
             subject: `Your ${companyName} password reset code`,
@@ -106,7 +139,7 @@ const sendPasswordResetOtp = async (user, code) => {
         const error = new Error(
             cause.code === "EMAIL_NOT_CONFIGURED"
                 ? cause.message
-                : "Password reset code could not be delivered. Verify SMTP settings and try again."
+                : "Password reset code could not be delivered. Check the backend logs and verify the Resend or SMTP configuration."
         );
         error.status = 503;
         throw error;

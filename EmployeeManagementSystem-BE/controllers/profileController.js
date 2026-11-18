@@ -7,8 +7,8 @@ const { getEmployeeIdForUser } = require("../utils/employeeAccount");
 const getProfile = asyncHandler(async (req, res) => {
     const result = await pool.query(
         `SELECT u.id, u.name, u.email, u.role, e.email AS employee_email, e.employee_code,
-                COALESCE(d.name, e.department) AS department, e.designation,
-                e.annual_paid_leave_days,
+                COALESCE(d.name, e.department) AS department, e.designation, e.salary,
+                e.casual_leave_days,
                 e.phone, e.joining_date, e.status, e.address,
                 e.emergency_contact_name, e.emergency_contact_phone, e.bank_account_encrypted,
                 e.profile_image IS NOT NULL AS has_profile_image

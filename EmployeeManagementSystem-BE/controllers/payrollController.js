@@ -7,34 +7,43 @@ const validDate = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.
 const money = (value) => value !== "" && value !== null && value !== undefined &&
     Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 9999999999.99 &&
     Math.abs(Math.round(Number(value) * 100) - Number(value) * 100) < 1e-7;
-const validatePayroll = (body, partial = false) => {
-    const fields = ["gross_salary", "deductions", "net_salary"];
-    for (const field of fields) {
-        if ((partial || body[field] !== undefined) && !money(body[field])) return `${field.replaceAll("_", " ")} must be a non-negative amount with at most two decimal places`;
+const earningFields = ["basic_salary", "allowances", "bonus", "other_earnings"];
+const deductionFields = ["tax_deduction", "pf_deduction", "unpaid_leave_deduction", "other_deductions"];
+const payrollFields = [...earningFields, ...deductionFields];
+const calculatePayroll = (values) => {
+    const cents = (field) => Math.round(Number(values[field] || 0) * 100);
+    const grossCents = earningFields.reduce((sum, field) => sum + cents(field), 0);
+    const deductionsCents = deductionFields.reduce((sum, field) => sum + cents(field), 0);
+    return { gross_salary: grossCents / 100, deductions: deductionsCents / 100, net_salary: (grossCents - deductionsCents) / 100 };
+};
+const validatePayroll = (body) => {
+    if (!validDate(body.pay_period)) return "Pay period must be a valid date";
+    for (const field of payrollFields) {
+        if (!money(body[field])) return `${field.replaceAll("_", " ")} must be a non-negative amount with at most two decimal places`;
     }
-    if ((!partial || body.pay_period !== undefined) && !validDate(body.pay_period)) return "Pay period must be a valid date";
-    if (body.gross_salary !== undefined && body.deductions !== undefined && body.net_salary !== undefined &&
-        Math.round(Number(body.gross_salary) * 100) - Math.round(Number(body.deductions) * 100) !== Math.round(Number(body.net_salary) * 100)) {
-        return "Net salary must equal gross salary minus deductions";
-    }
-    if (body.deductions !== undefined && body.gross_salary !== undefined && Number(body.deductions) > Number(body.gross_salary)) return "Deductions cannot exceed gross salary";
+    const totals = calculatePayroll(body);
+    if (totals.net_salary < 0) return "Total deductions cannot exceed total earnings";
+    if ([totals.gross_salary, totals.deductions, totals.net_salary].some((value) => value > 9999999999.99)) return "Calculated payroll total exceeds the supported amount";
     return null;
 };
 
 const create = asyncHandler(async (req, res) => {
     const employeeId = Number(req.body.employee_id);
     if (!Number.isSafeInteger(employeeId) || employeeId < 1) return res.status(400).json({ success: false, message: "Choose a valid employee" });
-    if (req.body.gross_salary === undefined || req.body.net_salary === undefined) return res.status(400).json({ success: false, message: "Gross salary and net salary are required" });
-    const payrollInput = { ...req.body, deductions: req.body.deductions ?? 0 };
+    const employee = await pool.query("SELECT id, salary FROM employees WHERE id = $1", [employeeId]);
+    if (!employee.rowCount) return res.status(404).json({ success: false, message: "Employee not found" });
+    const payrollInput = Object.fromEntries(payrollFields.map((field) => [field, req.body[field] ?? (field === "basic_salary" ? employee.rows[0].salary ?? 0 : 0)]));
+    if (req.body.gross_salary !== undefined && !payrollFields.some((field) => req.body[field] !== undefined)) payrollInput.basic_salary = req.body.gross_salary;
+    if (req.body.deductions !== undefined && !payrollFields.some((field) => req.body[field] !== undefined)) payrollInput.other_deductions = req.body.deductions;
+    payrollInput.pay_period = req.body.pay_period;
     const error = validatePayroll(payrollInput);
     if (error) return res.status(400).json({ success: false, message: error });
-    const employee = await pool.query("SELECT id FROM employees WHERE id = $1", [employeeId]);
-    if (!employee.rowCount) return res.status(404).json({ success: false, message: "Employee not found" });
+    const totals = calculatePayroll(payrollInput);
     try {
         const result = await pool.query(
-            `INSERT INTO payroll (employee_id, pay_period, gross_salary, deductions, net_salary)
-             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [employeeId, `${req.body.pay_period.slice(0, 7)}-01`, req.body.gross_salary, req.body.deductions ?? 0, req.body.net_salary]
+            `INSERT INTO payroll (employee_id, pay_period, ${payrollFields.join(", ")}, gross_salary, deductions, net_salary)
+             VALUES ($1, $2, ${payrollFields.map((_, index) => `$${index + 3}`).join(", ")}, $${payrollFields.length + 3}, $${payrollFields.length + 4}, $${payrollFields.length + 5}) RETURNING *`,
+            [employeeId, `${req.body.pay_period.slice(0, 7)}-01`, ...payrollFields.map((field) => payrollInput[field]), totals.gross_salary, totals.deductions, totals.net_salary]
         );
         res.status(201).json({ success: true, data: result.rows[0] });
     } catch (error) {
@@ -44,19 +53,24 @@ const create = asyncHandler(async (req, res) => {
 });
 
 const update = asyncHandler(async (req, res) => {
-    const allowed = ["pay_period", "gross_salary", "deductions", "net_salary"];
+    const allowed = ["pay_period", ...payrollFields, "gross_salary", "deductions", "net_salary"];
     const fields = Object.keys(req.body).filter((field) => allowed.includes(field));
     if (!fields.length) return res.status(400).json({ success: false, message: "No editable payroll fields provided" });
     const currentResult = await pool.query("SELECT * FROM payroll WHERE id = $1", [req.params.id]);
     if (!currentResult.rowCount) return res.status(404).json({ success: false, message: "Payroll record not found" });
     if (currentResult.rows[0].status === "paid") return res.status(409).json({ success: false, message: "Paid payroll records cannot be edited" });
-    const next = { ...currentResult.rows[0], ...req.body };
+    const current = currentResult.rows[0];
+    const next = { ...Object.fromEntries(payrollFields.map((field) => [field, Number(current[field] ?? 0)])), ...req.body, pay_period: req.body.pay_period || String(current.pay_period).slice(0, 10) };
+    // Keep older clients compatible by treating their consolidated values as basic pay and other deductions.
+    if (req.body.gross_salary !== undefined && !payrollFields.some((field) => req.body[field] !== undefined)) next.basic_salary = req.body.gross_salary;
+    if (req.body.deductions !== undefined && !payrollFields.some((field) => req.body[field] !== undefined)) next.other_deductions = req.body.deductions;
     if (req.body.pay_period) next.pay_period = `${req.body.pay_period.slice(0, 7)}-01`;
     const error = validatePayroll(next);
     if (error) return res.status(400).json({ success: false, message: error });
-    const values = fields.map((field) => next[field]);
-    const assignments = fields.map((field, index) => `${field} = $${index + 1}`).join(", ");
-    values.push(req.params.id);
+    const totals = calculatePayroll(next);
+    const updateFields = [...payrollFields, "gross_salary", "deductions", "net_salary", "pay_period"];
+    const values = [...payrollFields.map((field) => next[field]), totals.gross_salary, totals.deductions, totals.net_salary, next.pay_period, req.params.id];
+    const assignments = updateFields.map((field, index) => `${field} = $${index + 1}`).join(", ");
     try {
         const result = await pool.query(`UPDATE payroll SET ${assignments} WHERE id = $${values.length} AND status <> 'paid' RETURNING *`, values);
         if (!result.rowCount) return res.status(409).json({ success: false, message: "Payroll was paid or removed; reload and try again" });
@@ -125,6 +139,16 @@ const getEmployeePayroll = asyncHandler(async (req, res) => {
     res.json({ success: true, data: result.rows });
 });
 
+const listPayrollEmployees = asyncHandler(async (req, res) => {
+    const result = await pool.query(
+        `SELECT id, name, employee_code
+         FROM employees
+         WHERE status = 'Active'
+         ORDER BY name`
+    );
+    res.json({ success: true, data: result.rows });
+});
+
 const getPayslip = asyncHandler(async (req, res) => {
     const employeeId = req.user.role === "employee" ? await getEmployeeIdForUser(req.user.id) : null;
     const result = await pool.query(
@@ -158,6 +182,7 @@ module.exports = {
     listPayroll,
     getPayrollSummary,
     getEmployeePayroll,
+    listPayrollEmployees,
     getPayslip,
     markPayrollPaid
 };

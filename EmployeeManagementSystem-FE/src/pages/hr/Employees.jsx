@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Camera, Mail, Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { Camera, CheckCircle2, Mail, Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { api, getRows } from "../../api.js";
 import { currency } from "../../utils/formatters.js";
 import EmployeeAvatar from "../../components/EmployeeAvatar.jsx";
@@ -8,14 +8,16 @@ import RecordTable from "../../components/RecordTable.jsx";
 import { ErrorBanner, MiniMetric, StatusBadge } from "../../components/ui.jsx";
 
 const blank = {
-  name: "", email: "", department_id: "", designation: "", annual_paid_leave_days: "12",
+  name: "", email: "", department_id: "", designation: "",
   phone: "", salary: "", bank_account_number: "", joining_date: "", address: "",
   emergency_contact_name: "", emergency_contact_phone: "", status: "Active"
 };
+const applicationRoleLabel = { admin: "System Admin", hr: "HR", employee: "Employee", payroll_admin: "HR", it: "Employee", support: "Employee", maintenance: "Employee" };
 
 export default function Employees({ user }) {
   const [employees, setEmployees] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [myProfile, setMyProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -39,9 +41,10 @@ export default function Employees({ user }) {
   const loadEmployees = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const [employeeResult, departmentResult] = await Promise.all([api("/employees"), api("/departments")]);
+      const [employeeResult, departmentResult, profileResult] = await Promise.all([api("/employees"), api("/departments"), api("/profile")]);
       setEmployees(getRows(employeeResult, "employees"));
       setDepartments(getRows(departmentResult, "departments"));
+      setMyProfile(profileResult.profile);
     }
     catch (requestError) { setError(requestError.message); }
     finally { setLoading(false); }
@@ -54,7 +57,7 @@ export default function Employees({ user }) {
     setForm(employee ? {
       name: employee.name || "", email: employee.email || "",
       department_id: String(employee.department_id || departments.find((department) => department.name.toLowerCase() === employee.department?.toLowerCase())?.id || ""),
-      designation: employee.designation || "", annual_paid_leave_days: String(employee.annual_paid_leave_days ?? 12),
+      designation: employee.designation || "",
       phone: employee.phone || "", salary: String(employee.salary ?? ""), bank_account_number: "",
       joining_date: employee.joining_date ? String(employee.joining_date).slice(0, 10) : "",
       address: employee.address || "", emergency_contact_name: employee.emergency_contact_name || "",
@@ -73,7 +76,7 @@ export default function Employees({ user }) {
       return;
     }
     setSaving(true);
-    let body = { ...form, salary: Number(form.salary), annual_paid_leave_days: Number(form.annual_paid_leave_days) };
+    let body = { ...form, salary: Number(form.salary) };
     if (photo) {
       const multipart = new FormData();
       Object.entries(body).forEach(([key, value]) => multipart.append(key, value));
@@ -97,7 +100,13 @@ export default function Employees({ user }) {
       const result = await api(`/employees/${employee.id}/invite`, { method: "POST" });
       setNotice(result.message || "Setup invitation sent.");
       setNoticeIsWarning(false);
-    } catch (requestError) { setError(requestError.message); }
+    } catch (requestError) {
+      if (requestError.status === 409) {
+        await loadEmployees();
+        setNotice("Account setup is already complete. No email was sent.");
+        setNoticeIsWarning(false);
+      } else setError(requestError.message);
+    }
     finally { setInvitingId(null); }
   };
   const deleteEmployee = async (employee) => {
@@ -111,31 +120,34 @@ export default function Employees({ user }) {
     { label: "Employee ID", render: (row) => row.employee_code || "—" },
     { label: "Department", render: (row) => row.department || "—" },
     { label: "Job title", render: (row) => row.designation || "—" },
-    { label: "Login role", render: (row) => <StatusBadge value={row.login_role || "employee"} /> },
+    { label: "Application role", render: (row) => <StatusBadge value={applicationRoleLabel[row.login_role] || row.login_role || "Employee"} /> },
+    { label: "Account setup", render: (row) => row.account_setup_complete
+      ? <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700"><CheckCircle2 size={13}/>Setup complete</span>
+      : <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-semibold text-amber-700">Setup pending</span> },
     { label: "Email", render: (row) => row.email },
     { label: "Monthly salary", render: (row) => currency(row.salary) },
     { label: "Status", render: (row) => <StatusBadge value={row.status} /> },
-    { label: "Actions", render: (row) => <div className="flex justify-end gap-1"><button disabled={invitingId === row.id} onClick={() => resendInvite(row)} title="Resend account setup invitation" aria-label={`Resend setup invitation to ${row.name}`} className="rounded-lg p-2 text-slate-400 hover:bg-violet-50 hover:text-brand disabled:opacity-50"><Mail size={14} /></button>{user.role === "hr" && <button onClick={() => openForm(row)} title="Edit employee" className="rounded-lg p-2 text-slate-400 hover:bg-violet-50 hover:text-brand"><Pencil size={14} /></button>}{(user.role === "admin" || user.role === "hr") && <button onClick={() => deleteEmployee(row)} title="Delete employee" className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={14} /></button>}</div> }
+    { label: "Actions", render: (row) => <div className="flex justify-end gap-1">{!row.account_setup_complete && <button disabled={invitingId === row.id} onClick={() => resendInvite(row)} title="Resend setup email" aria-label={`Resend setup email to ${row.name}`} className="rounded-lg p-2 text-slate-400 hover:bg-violet-50 hover:text-brand disabled:opacity-50"><Mail size={14} /></button>}{user.role === "hr" && <button onClick={() => openForm(row)} title="Edit employee" className="rounded-lg p-2 text-slate-400 hover:bg-violet-50 hover:text-brand"><Pencil size={14} /></button>}{(user.role === "admin" || user.role === "hr") && <button onClick={() => deleteEmployee(row)} title="Delete employee" className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={14} /></button>}</div> }
   ];
 
   return <div className="space-y-6">
-    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-[11px] font-bold uppercase tracking-[.16em] text-brand">{user.role === "admin" ? "Admin platform" : "People operations"}</p><h1 className="mt-2 text-[27px] font-bold tracking-tight text-ink">Employees</h1><p className="mt-1 text-xs text-slate-400">{user.role === "admin" ? "View employee records or add a new employee." : "Manage employee profiles, job information, and accounts."}</p></div><button onClick={() => openForm()} className="rounded-xl bg-brand px-4 py-2.5 text-[11px] font-bold text-white"><Plus size={15} className="mr-1.5 inline" />Add employee</button></div>
+    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-[11px] font-bold uppercase tracking-[.16em] text-brand">{user.role === "admin" ? "Admin platform" : "People operations"}</p><h1 className="mt-2 text-[27px] font-bold tracking-tight text-ink">Employees</h1><p className="mt-1 text-xs text-slate-400">{user.role === "admin" ? "View employee records or add a new employee." : "Manage employee profiles, job information, and accounts."}</p></div><div className="flex flex-wrap gap-2">{user.role === "hr" && !myProfile?.employee_code && <button onClick={() => { openForm(); setForm({ ...blank, name: user.name || "", email: user.email || "" }); }} className="rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-[11px] font-bold text-emerald-800"><Plus size={15} className="mr-1.5 inline" />Create my employee profile</button>}<button onClick={() => openForm()} className="rounded-xl bg-brand px-4 py-2.5 text-[11px] font-bold text-white"><Plus size={15} className="mr-1.5 inline" />Add employee</button></div></div>
+    <section className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4"><p className="text-xs font-bold text-blue-950">One HR account, one Employee ID, two workspaces</p><p className="mt-1 text-[11px] leading-5 text-blue-900/75">If your Admin created your HR login without an employee profile, create your own profile here using the HR login email. The app links that profile to this account and assigns one Employee ID. Use <b>Open my employee workspace</b> in the sidebar to see your own attendance, payslips, and employment details.</p></section>
     {notice && <p role="status" className={`rounded-xl border px-4 py-3 text-xs font-semibold ${noticeIsWarning ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-100 bg-emerald-50 text-emerald-700"}`}>{notice}</p>}
     {error && <ErrorBanner message={error} retry={loadEmployees} />}
     <div className="grid gap-3 sm:grid-cols-3"><MiniMetric title="Total employees" value={employees.length} color="violet" /><MiniMetric title="Active employees" value={employees.filter((employee) => employee.status === "Active").length} color="green" /><MiniMetric title="Departments" value={new Set(employees.map((employee) => employee.department).filter(Boolean)).size} color="blue" /></div>
     <RecordTable title="Employees" rows={employees} columns={columns} loading={loading} error="" search={search} onSearch={setSearch} />
-    {open && <RecordDialog title={editing ? "Edit employee" : "Add employee"} description={editing ? "Update this employee profile without changing their existing Employee ID." : "One employee profile per work email. Existing profiles keep their original Employee ID."} onClose={() => setOpen(false)} onSubmit={saveEmployee} saving={saving} error={error}>
-      <div className="flex items-center gap-3 rounded-xl border border-violet-100 bg-violet-50/60 p-3 sm:col-span-2"><ShieldCheck size={18} className="shrink-0 text-brand" /><p className="text-[10px] leading-5 text-slate-600">New employees receive an email with a one-time code to set their own password. If delivery fails, the employee is still saved; check backend logs, fix the configured email provider, then use the envelope action to resend.</p></div>
+    {open && <RecordDialog title={editing ? "Edit employee" : form.email.toLowerCase() === user.email?.toLowerCase() && user.role === "hr" ? "Create my employee profile" : "Add employee"} description={editing ? "Update this employee profile without changing their existing Employee ID." : form.email.toLowerCase() === user.email?.toLowerCase() && user.role === "hr" ? "This creates one employee profile and links it to your existing HR login. The profile will use the same Employee ID in both workspaces." : "One employee profile per work email. Existing profiles keep their original Employee ID."} onClose={() => setOpen(false)} onSubmit={saveEmployee} saving={saving} error={error}>
+      <div className="flex items-center gap-3 rounded-xl border border-violet-100 bg-violet-50/60 p-3 sm:col-span-2"><ShieldCheck size={18} className="shrink-0 text-brand" /><p className="text-[10px] leading-5 text-slate-600">{form.email.toLowerCase() === user.email?.toLowerCase() && user.role === "hr" ? "This profile will link to your existing HR login. No second account or setup email will be created." : "New employees receive a one-time setup email so they can set their password. If delivery fails, fix the email provider and resend while setup is pending. Once setup is complete, the account is marked complete and resend is disabled."}</p></div>
       <div className="flex items-center gap-4 sm:col-span-2">
         <EmployeeAvatar employeeId={editing?.id} hasPhoto={editing?.has_profile_image} file={photo} name={form.name || editing?.name} className="h-14 w-14 rounded-2xl text-sm" />
         <label className="text-[10px] font-bold text-slate-600"><span className="inline-flex items-center gap-2"><Camera size={14} className="text-brand" />Profile photo (optional)</span><input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const selected = event.target.files?.[0] || null; if (selected && selected.size > 5 * 1024 * 1024) { setError("Profile photo must be 5 MB or smaller."); event.target.value = ""; return; } setPhoto(selected); }} className="mt-2 block w-full text-[10px] font-normal" /><span className="font-normal text-slate-400">JPG, PNG or WebP · up to 5 MB</span></label>
       </div>
       <label className="block text-[10px] font-bold text-slate-600">Full name<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-normal" /></label>
       <label className="block text-[10px] font-bold text-slate-600">Work email<input required type="email" value={form.email} onChange={(event) => { setError(""); setForm({ ...form, email: event.target.value }); }} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-normal" />{matchingEmployee && <span className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-medium text-amber-800"><span>Profile already exists · Employee ID <strong>{matchingEmployee.employee_code}</strong></span>{user.role === "hr" && <button type="button" onClick={() => { setError(""); openForm(matchingEmployee); }} className="font-bold text-amber-900 underline underline-offset-2">Edit existing profile</button>}</span>}</label>
-      <label className="block text-[10px] font-bold text-slate-600">Department<select required value={form.department_id} onChange={(event) => setForm({ ...form, department_id: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-normal"><option value="">Select department…</option>{selectableDepartments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select>{selectableDepartments.length === 0 ? <span className="mt-1 block font-normal text-amber-700">{departments.length === 0 ? "Create a department first to add an employee." : "Create a non-admin department first to add an employee."}</span> : <span className="mt-1 block font-normal text-slate-400">Selecting HR or Human Resources creates an HR login; other departments create an employee login.</span>}</label>
+      <label className="block text-[10px] font-bold text-slate-600">Department<select required value={form.department_id} onChange={(event) => setForm({ ...form, department_id: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-normal"><option value="">Select department…</option>{selectableDepartments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select>{selectableDepartments.length === 0 ? <span className="mt-1 block font-normal text-amber-700">{departments.length === 0 ? "Create a department first to add an employee." : "Create a non-admin department first to add an employee."}</span> : <span className="mt-1 block font-normal text-slate-400">Department determines their team only. Login access is assigned separately from Team Access.</span>}</label>
       <label className="block text-[10px] font-bold text-slate-600">Job title<input value={form.designation} onChange={(event) => setForm({ ...form, designation: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-normal" /></label>
       <label className="block text-[10px] font-bold text-slate-600">Monthly salary<input required min="0" type="number" step="any" value={form.salary} onChange={(event) => setForm({ ...form, salary: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-normal" /></label>
-      <label className="block text-[10px] font-bold text-slate-600">Annual paid leave days<input min="0" max="365" type="number" value={form.annual_paid_leave_days} onChange={(event) => setForm({ ...form, annual_paid_leave_days: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-normal" /></label>
       <label className="block text-[10px] font-bold text-slate-600">Phone<input type="tel" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-normal" /></label>
       <label className="block text-[10px] font-bold text-slate-600">Bank account number<input inputMode="numeric" maxLength={45} aria-invalid={bankAccountInvalid} value={form.bank_account_number} onChange={(event) => { setError(""); setForm({ ...form, bank_account_number: event.target.value }); }} placeholder="e.g. 1234-5678-9012" className={`mt-1.5 h-11 w-full rounded-xl border px-3 text-xs font-normal ${bankAccountInvalid ? "border-rose-400" : "border-slate-200"}`} />{bankAccountInvalid ? <span className="mt-1 block font-normal text-rose-600">Enter 6–34 digits; spaces and hyphens are allowed. Example: 1234-5678-9012.</span> : <span className="mt-1 block font-normal text-slate-400">Enter 6–34 digits; spaces and hyphens are allowed. Example: 1234-5678-9012. Encrypted before saving; leave blank when editing to keep the current number.</span>}</label>
       <label className="block text-[10px] font-bold text-slate-600">Joining date<input type="date" value={form.joining_date} onChange={(event) => setForm({ ...form, joining_date: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-normal" /></label>

@@ -5,7 +5,7 @@ Express/PostgreSQL API.
 
 ## Features
 
-- Three role-based workspaces: one system admin, multiple HR users, and employees
+- Three application roles: System Admin, HR, and Employee
 - Employee profiles, departments, and account management
 - Existing employee profiles are matched by work email and retain their Employee ID when edited
 - Department membership linked with database foreign keys
@@ -15,6 +15,36 @@ Express/PostgreSQL API.
 - Indian Rupee (₹) salary and payroll display
 - Documents, announcements, and company holidays
 - Profile photos, password recovery, and encrypted bank-account storage
+
+## Workspace responsibilities
+
+- **System Admin:** organization overview, employee directory, departments, user access, HR announcements, and read-only service-desk oversight.
+- **HR:** manages attendance, leave approvals, employee documents, holidays, payroll, and other people operations from one workspace. Employees can see only their own payslips.
+- **Service Desk:** HR and employees may submit requests. Every request enters one shared Employee queue; any employee can take and process it. HR and Admin can view all requests, while only employees can update request status.
+- **Employee:** self-service access to their own profile, attendance, leave, payslips, documents, and service requests.
+
+The system has one protected System Admin account. Provision it during deployment
+with `ADMIN_NAME`, `ADMIN_EMAIL`, and a unique `ADMIN_PASSWORD` of at least 12
+characters, then run `npm run create-admin` from `EmployeeManagementSystem-BE`.
+Use **Team access** to grant HR or Employee roles;
+System Admin privileges cannot be granted from the application.
+
+To onboard HR, the System Admin creates an HR login email and password in
+**Team access**. HR signs in, creates a department if needed, and creates their
+own employee profile with that same login email. The system links the profile
+to the existing HR account and assigns one Employee ID for both workspaces.
+HR can then switch to the Employee workspace to check in/out and view personal
+attendance, payslips, and employment details.
+
+## Departments and roles
+
+A **department** is where a person works (for example, Finance, HR, IT, Support,
+or Maintenance). **Job title** describes their work. An application role opens
+an application workspace: System Admin, HR, or Employee. IT, Support, and
+Maintenance employees use the shared Employee dashboard. Service request type
+labels (IT, Support, Maintenance) describe the work, not a separate queue.
+Payroll is an HR function,
+not a separate role.
 
 ## Requirements
 
@@ -35,7 +65,7 @@ encrypted bank account numbers unreadable.
 
 Employees can sign in with either their work email or Employee ID and the
 password they set up. HR accounts use their own login and HR workspace and can
-be linked to an existing employee profile from **User access**. The system
+be linked to an existing employee profile from **Team access**. The system
 admin uses the configured `ADMIN_EMAIL` and has a separate admin workspace.
 Linking the system admin to an employee profile can create an employee-role
 login using that same work email and a separate employee password; the login
@@ -43,7 +73,7 @@ uses the password to select the correct workspace. SMTP must be configured for
 this setup invitation.
 The system admin is created from `ADMIN_NAME`, `ADMIN_EMAIL`, and
 `ADMIN_PASSWORD`; the database allows only one admin. HR accounts can be
-created in **User access** and linked to existing employee profiles, preserving
+created in **Team access** and linked to existing employee profiles, preserving
 their Employee IDs. Multiple HR accounts are supported.
 
 SMTP settings are optional for ordinary use, but required for password recovery

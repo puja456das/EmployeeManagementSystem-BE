@@ -18,7 +18,7 @@ const migrate = async () => {
             );
             ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
             ALTER TABLE users ADD CONSTRAINT users_role_check
-                CHECK (role IN ('admin', 'hr', 'employee', 'it', 'support', 'maintenance'));
+                CHECK (role IN ('admin', 'hr', 'employee', 'payroll_admin', 'it', 'support', 'maintenance'));
 
             ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;
             CREATE UNIQUE INDEX IF NOT EXISTS users_role_email_key ON users (lower(email), role);
@@ -62,6 +62,13 @@ const migrate = async () => {
             ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_annual_paid_leave_days_check;
             ALTER TABLE employees ADD CONSTRAINT employees_annual_paid_leave_days_check
                 CHECK (annual_paid_leave_days BETWEEN 0 AND 365);
+            ALTER TABLE employees ADD COLUMN IF NOT EXISTS casual_leave_days INTEGER;
+            UPDATE employees SET casual_leave_days = 12 WHERE casual_leave_days IS NULL;
+            ALTER TABLE employees ALTER COLUMN casual_leave_days SET DEFAULT 12;
+            ALTER TABLE employees ALTER COLUMN casual_leave_days SET NOT NULL;
+            ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_casual_leave_days_check;
+            ALTER TABLE employees ADD CONSTRAINT employees_casual_leave_days_check
+                CHECK (casual_leave_days = 12);
             ALTER TABLE users ADD COLUMN IF NOT EXISTS linked_employee_id BIGINT REFERENCES employees(id) ON DELETE SET NULL;
             UPDATE employees SET employee_code = 'EMP-' || id WHERE employee_code IS NULL;
             CREATE UNIQUE INDEX IF NOT EXISTS employees_employee_code_key ON employees(employee_code);
@@ -134,6 +141,14 @@ const migrate = async () => {
             ALTER TABLE leaves DROP CONSTRAINT IF EXISTS leaves_leave_type_check;
             ALTER TABLE leaves ADD CONSTRAINT leaves_leave_type_check
                 CHECK (leave_type IN ('annual', 'sick', 'casual', 'unpaid', 'parental', 'bereavement', 'compensatory'));
+            CREATE TABLE IF NOT EXISTS leave_documents (
+                leave_id BIGINT PRIMARY KEY REFERENCES leaves(id) ON DELETE CASCADE,
+                original_name VARCHAR(255) NOT NULL,
+                mime_type VARCHAR(100) NOT NULL,
+                file_size INTEGER NOT NULL CHECK (file_size BETWEEN 1 AND 5242880),
+                file_data BYTEA NOT NULL,
+                uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
 
             CREATE TABLE IF NOT EXISTS service_requests (
                 id BIGSERIAL PRIMARY KEY,
@@ -164,6 +179,17 @@ const migrate = async () => {
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 UNIQUE (employee_id, pay_period)
             );
+            ALTER TABLE payroll ADD COLUMN IF NOT EXISTS basic_salary NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (basic_salary >= 0);
+            ALTER TABLE payroll ADD COLUMN IF NOT EXISTS allowances NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (allowances >= 0);
+            ALTER TABLE payroll ADD COLUMN IF NOT EXISTS bonus NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (bonus >= 0);
+            ALTER TABLE payroll ADD COLUMN IF NOT EXISTS other_earnings NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (other_earnings >= 0);
+            ALTER TABLE payroll ADD COLUMN IF NOT EXISTS tax_deduction NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (tax_deduction >= 0);
+            ALTER TABLE payroll ADD COLUMN IF NOT EXISTS pf_deduction NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (pf_deduction >= 0);
+            ALTER TABLE payroll ADD COLUMN IF NOT EXISTS unpaid_leave_deduction NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (unpaid_leave_deduction >= 0);
+            ALTER TABLE payroll ADD COLUMN IF NOT EXISTS other_deductions NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (other_deductions >= 0);
+            UPDATE payroll SET basic_salary = gross_salary, other_deductions = deductions
+            WHERE basic_salary = 0 AND allowances = 0 AND bonus = 0 AND other_earnings = 0
+              AND tax_deduction = 0 AND pf_deduction = 0 AND unpaid_leave_deduction = 0 AND other_deductions = 0;
 
             CREATE TABLE IF NOT EXISTS announcements (
                 id BIGSERIAL PRIMARY KEY,

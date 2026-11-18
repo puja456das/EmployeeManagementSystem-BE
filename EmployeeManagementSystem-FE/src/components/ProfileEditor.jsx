@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Check, ShieldCheck, UserRound } from "lucide-react";
 import { api } from "../api.js";
-import { dateLabel } from "../utils/formatters.js";
-import { ErrorBanner, ProfileFact, ProfileInput } from "./ui.jsx";
+import { currency, dateLabel } from "../utils/formatters.js";
+import { ErrorBanner, ProfileInput } from "./ui.jsx";
 import EmployeeAvatar from "./EmployeeAvatar.jsx";
 
 export default function ProfileEditor({ user }) {
@@ -27,16 +27,16 @@ export default function ProfileEditor({ user }) {
     admin: "Workspace administrator",
     hr: "HR team member",
     employee: "Employee",
-    it: "IT operations",
-    support: "Support team",
-    maintenance: "Maintenance team"
   }[profile?.role || user.role] || "Team member";
   const employeeFacts = [
     profile?.employee_code && { label: "Employee ID", value: profile.employee_code },
+    profile?.email && { label: "Login email", value: profile.email },
+    profile?.employee_email && { label: "Work email", value: profile.employee_email },
     profile?.department && { label: "Department", value: profile.department },
     profile?.designation && { label: "Job title", value: profile.designation },
     profile?.joining_date && { label: "Joined", value: dateLabel(profile.joining_date) },
-    profile?.annual_paid_leave_days !== undefined && { label: "Paid leave / year", value: `${profile.annual_paid_leave_days} days` },
+    profile?.salary !== undefined && profile?.salary !== null && { label: "Monthly salary", value: currency(profile.salary) },
+    profile?.casual_leave_days !== undefined && { label: "Casual leave / year", value: `${profile.casual_leave_days} days` },
     profile?.bank_account_masked && { label: "Bank account", value: profile.bank_account_masked },
     profile?.status && { label: "Employment status", value: profile.status }
   ].filter(Boolean);
@@ -51,7 +51,7 @@ export default function ProfileEditor({ user }) {
           <p className="mt-1 break-all text-xs text-slate-400">{profile?.email || "Email not available"}</p>
           {profile?.employee_email && profile.employee_email.toLowerCase() !== profile.email?.toLowerCase() && <p className="mt-1 break-all text-[10px] text-slate-400">Employee work email · {profile.employee_email}</p>}
           <span className="mt-4 inline-flex items-center gap-2 rounded-full bg-violet-50 px-3 py-1.5 text-[10px] font-bold text-brand"><ShieldCheck size={13} />{roleLabel}</span>
-          {employeeFacts.length > 0 && <div className="mt-6 border-t border-slate-100 pt-4"><p className="mb-3 text-[10px] font-bold uppercase tracking-[.12em] text-slate-400">Employment details</p><div className="grid grid-cols-2 gap-2">{employeeFacts.map((fact) => <ProfileFact key={fact.label} label={fact.label} value={fact.value} />)}</div></div>}
+          {employeeFacts.length > 0 && <div className="mt-6 border-t border-slate-100 pt-4"><p className="mb-3 text-[10px] font-bold uppercase tracking-[.12em] text-slate-400">Employment details</p><div className="overflow-hidden rounded-xl border border-slate-100"><table className="w-full text-left"><tbody className="divide-y divide-slate-100">{employeeFacts.map((fact) => <tr key={fact.label}><th className="w-[42%] bg-slate-50/70 px-3 py-2.5 text-[9px] font-semibold text-slate-500">{fact.label}</th><td className="break-all px-3 py-2.5 text-[10px] font-semibold text-ink">{fact.value}</td></tr>)}</tbody></table></div></div>}
           {employeeFacts.length === 0 && <div className="mt-6 rounded-xl bg-slate-50 p-3.5"><p className="text-[10px] font-semibold text-slate-600">Account access</p><p className="mt-1 text-[10px] leading-5 text-slate-400">Your role controls which workspace tools and information you can access.</p></div>}
         </div>
       </section>

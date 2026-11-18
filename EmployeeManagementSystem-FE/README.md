@@ -20,7 +20,8 @@ All frontend source files are under `src/`:
 - `pages/admin/` contains the system control center, employee and department
   view/create pages, HR-targeted announcements, profile, and user-access pages.
 - `pages/hr/` contains the HR dashboard and daily operations pages for employees,
-  departments, attendance, leaves, payroll, documents, announcements, and holidays.
+  departments, attendance, leaves, documents, announcements, and holidays.
+- `pages/hr/Payroll.jsx` contains HR payroll processing; employee payslips stay in the Employee workspace.
 - `pages/employee/` contains separate dashboard, attendance, leaves, payslips,
   documents, announcements, holidays, and profile pages for employee accounts.
 - `pages/shared/` contains the shared login page.
@@ -29,6 +30,13 @@ All frontend source files are under `src/`:
 - `config/` contains navigation and resource field definitions.
 - `utils/formatters.js` contains shared date, currency, and display helpers.
 - `api.js` contains the frontend API client.
+
+The three application roles are System Admin, HR, and Employee. Payroll is part
+of the HR workspace. IT,
+Support, and Maintenance are departments, not roles or separate dashboards.
+Their staff use the shared Employee dashboard and get their matching Service
+Desk queue based on department membership. System Admin assigns HR access from
+**Team access**.
 
 Admins and HR users create an employee login along with the employee record. The
 employee receives a one-time six-digit email setup code to choose their own

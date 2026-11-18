@@ -1,14 +1,26 @@
 import { useState } from "react";
-import { Bell, ChevronDown, ChevronRight, CircleHelp, LogOut, Menu, Search, Users, X } from "lucide-react";
+import { ArrowLeftRight, ChevronRight, CircleHelp, LogOut, Menu, Users, X } from "lucide-react";
 import { initials } from "../utils/formatters.js";
 
-export default function WorkspaceLayout({ user, active, allowedItems, onNavigate, onLogout, children }) {
+export default function WorkspaceLayout({ user, active, allowedItems, onNavigate, onLogout, onSwitchWorkspace, children }) {
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState("");
   const isEmployee = user.role === "employee";
   const isHr = user.role === "hr";
   const navigate = onNavigate;
-  const workspaceLabel = ({ admin: "Admin console", hr: "HR workspace", employee: "Employee workspace", it: "IT workspace", support: "Support workspace", maintenance: "Maintenance workspace" })[user.role] || "Operations workspace";
+  const workspaceLabel = ({ admin: "Admin console", hr: "HR workspace", employee: "Employee workspace" })[user.role] || "Workspace";
   const activeLabel = allowedItems.find((item) => item.id === active)?.label || "Dashboard";
+  const canSwitchWorkspace = user.role === "hr" || (user.role === "employee" && user.account_role === "hr");
+  const switchTarget = user.role === "hr" ? "employee" : "hr";
+  const switchLabel = user.role === "hr" ? "Open my employee workspace" : "Back to HR workspace";
+  const handleWorkspaceSwitch = async () => {
+    if (!onSwitchWorkspace) return;
+    setSwitching(true); setSwitchError("");
+    try { await onSwitchWorkspace(switchTarget); }
+    catch (error) { setSwitchError(error.message); }
+    finally { setSwitching(false); }
+  };
 
   return (
     <div className={`workspace-shell min-h-screen ${isEmployee ? "bg-[#f3f5ff]" : isHr ? "bg-[#f2faf8]" : "bg-canvas"}`}>
@@ -22,11 +34,14 @@ export default function WorkspaceLayout({ user, active, allowedItems, onNavigate
         <div className={`mx-4 mt-2 rounded-2xl p-3 ${isEmployee ? "border border-white/10 bg-white/[0.06]" : isHr ? "border border-emerald-100 bg-emerald-50/70" : "border border-indigo-100 bg-indigo-50/70"}`}>
           <div className="flex items-center gap-3">
             <div className={`grid h-9 w-9 place-items-center rounded-full text-xs font-bold uppercase ${isEmployee ? "bg-gradient-to-br from-amber-300 to-orange-400 text-orange-950" : isHr ? "bg-gradient-to-br from-emerald-100 to-teal-200 text-emerald-800" : "bg-gradient-to-br from-indigo-100 to-violet-200 text-indigo-700"}`}>{initials(user.name)}</div>
-            <div className="min-w-0 flex-1"><p className={`truncate text-xs font-bold ${isEmployee ? "text-white" : "text-ink"}`}>{user.name}</p><p className={`mt-0.5 text-[10px] capitalize ${isEmployee ? "text-indigo-200/65" : "text-slate-400"}`}>{({ admin: "System administrator", hr: "Human resources", employee: "Your employee account", it: "IT operations", support: "Service support", maintenance: "Facilities and maintenance" })[user.role] || "Team operations"}</p></div>
-            {!isEmployee && <ChevronDown size={15} className="text-slate-400" />}
+            <div className="min-w-0 flex-1"><p className={`truncate text-xs font-bold ${isEmployee ? "text-white" : "text-ink"}`}>{user.name}</p><p className={`mt-0.5 text-[10px] capitalize ${isEmployee ? "text-indigo-200/65" : "text-slate-400"}`}>{({ admin: "System administrator", hr: "Human resources", employee: "Your employee account" })[user.role] || "Workspace"}</p></div>
           </div>
         </div>
-        <p className={`mb-2 mt-7 px-6 text-[10px] font-bold uppercase tracking-[.15em] ${isEmployee ? "text-indigo-200/50" : isHr ? "text-emerald-700/55" : "text-slate-400"}`}>{({ admin: "System workspace", hr: "HR workspace", employee: "Your workspace", it: "IT queue", support: "Support queue", maintenance: "Maintenance queue" })[user.role] || "Operations"}</p>
+        {canSwitchWorkspace && <div className="mx-4 mt-2">
+          <button onClick={handleWorkspaceSwitch} disabled={switching} className={`flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-[11px] font-bold transition disabled:opacity-60 ${isEmployee ? "border-white/15 bg-white/10 text-cyan-100 hover:bg-white/15" : "border-emerald-200 bg-white text-emerald-800 hover:bg-emerald-50"}`}><ArrowLeftRight size={14}/>{switching ? "Switching workspace…" : switchLabel}</button>
+          {switchError && <p role="alert" className="mt-2 text-[10px] leading-4 text-rose-600">{switchError}</p>}
+        </div>}
+        <p className={`mb-2 mt-7 px-6 text-[10px] font-bold uppercase tracking-[.15em] ${isEmployee ? "text-indigo-200/50" : isHr ? "text-emerald-700/55" : "text-slate-400"}`}>{({ admin: "System workspace", hr: "HR workspace", employee: "Your workspace" })[user.role] || "Operations"}</p>
         <nav className="scrollbar-thin flex-1 space-y-1 overflow-y-auto px-3">
           {allowedItems.map(({ id, label, icon: Icon }) => (
             <button key={id} onClick={() => { navigate(id); setMobileMenu(false); }} className={`group flex w-full items-center gap-3 rounded-xl px-3 py-[11px] text-left text-[13px] font-semibold transition ${active === id ? isEmployee ? "bg-gradient-to-r from-cyan-400/20 to-violet-400/20 text-cyan-100 ring-1 ring-white/10" : isHr ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-100" : "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100" : isEmployee ? "text-indigo-100/70 hover:bg-white/[0.07] hover:text-white" : isHr ? "text-slate-500 hover:bg-emerald-50 hover:text-emerald-800" : "text-slate-500 hover:bg-indigo-50/70 hover:text-indigo-700"}`}>
@@ -36,8 +51,7 @@ export default function WorkspaceLayout({ user, active, allowedItems, onNavigate
         </nav>
         <div className={`m-4 rounded-2xl p-4 text-white ${isEmployee ? "border border-white/10 bg-gradient-to-br from-cyan-500/20 via-indigo-500/20 to-fuchsia-500/20" : isHr ? "bg-gradient-to-br from-emerald-600 via-teal-600 to-cyan-700" : "bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-600"}`}>
           <div className="mb-3 grid h-8 w-8 place-items-center rounded-lg bg-white/15"><CircleHelp size={17} /></div>
-          <p className="text-xs font-bold">{isEmployee ? "Here for you" : "Need a hand?"}</p><p className="mt-1 text-[10px] leading-4 text-white/75">{isEmployee ? "Your workday essentials, all in one place." : "Your people ops workspace, all in one place."}</p>
-          <button className="mt-3 text-[10px] font-bold underline decoration-white/50 underline-offset-4">Explore help center</button>
+          <p className="text-xs font-bold">{isEmployee ? "Here for you" : "Need a hand?"}</p><p className="mt-1 text-[10px] leading-4 text-white/75">{isEmployee ? "Your workday essentials, all in one place." : "Your people operations workspace, including payroll, all in one place."}</p>
         </div>
         <div className="border-t border-slate-100 px-3 py-3">
           <button onClick={onLogout} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-semibold ${isEmployee ? "text-indigo-100/70 hover:bg-rose-400/10 hover:text-rose-200" : "text-slate-500 hover:bg-rose-50 hover:text-rose-600"}`}><LogOut size={17} />Sign out</button>
@@ -51,11 +65,9 @@ export default function WorkspaceLayout({ user, active, allowedItems, onNavigate
             <div className="hidden items-center gap-2 text-[11px] text-slate-400 sm:flex"><span>{workspaceLabel}</span><ChevronRight size={13} /><span className="font-semibold text-slate-600">{active === "dashboard" ? isEmployee ? "Home" : "Overview" : activeLabel}</span></div>
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
-            {!isEmployee && <><label className="hidden h-10 w-[210px] items-center gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 lg:flex"><Search size={15} className="text-slate-400" /><input placeholder="Search anything..." className="w-full bg-transparent text-xs outline-none placeholder:text-slate-400" /></label><button aria-label="Notifications" className="relative grid h-9 w-9 place-items-center rounded-xl text-slate-500 hover:bg-slate-50"><Bell size={18} /><i className="absolute right-[8px] top-[7px] h-1.5 w-1.5 rounded-full bg-rose-500 ring-2 ring-white" /></button><div className="hidden h-8 w-px bg-slate-100 sm:block" /></>}
             <button onClick={() => navigate("profile")} className="flex items-center gap-2.5 rounded-xl py-1 pl-1 pr-1 sm:pr-2 hover:bg-slate-50">
               <div className={`grid h-9 w-9 place-items-center rounded-xl text-xs font-bold uppercase ${isEmployee ? "bg-gradient-to-br from-cyan-100 to-violet-200 text-indigo-700" : isHr ? "bg-gradient-to-br from-emerald-100 to-teal-200 text-emerald-800" : "bg-gradient-to-br from-indigo-100 to-violet-200 text-indigo-700"}`}>{initials(user.name)}</div>
               <span className="hidden max-w-[125px] truncate text-xs font-bold text-ink sm:block">{user.name}</span>
-              {!isEmployee && <ChevronDown size={14} className="hidden text-slate-400 sm:block" />}
             </button>
           </div>
         </header>

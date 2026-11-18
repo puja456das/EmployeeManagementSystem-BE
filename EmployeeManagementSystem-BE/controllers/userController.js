@@ -9,12 +9,10 @@ const userSelection = `u.id, u.name, u.email, u.role, COALESCE(u.linked_employee
 
 const getLinkedEmployeeId = (role, value) => {
     if (value === undefined || value === null || value === "") {
-        if (role === "employee" || role === "hr") {
-            const error = new Error(`Choose the existing employee profile for this ${role === "hr" ? "HR" : "employee"} login`);
-            error.status = 400;
-            throw error;
-        }
-        return null;
+        if (role === "hr") return null;
+        const error = new Error("Choose the employee profile this login belongs to");
+        error.status = 400;
+        throw error;
     }
     const employeeId = Number(value);
     if (!Number.isSafeInteger(employeeId) || employeeId < 1) {
@@ -144,7 +142,7 @@ const getUser = asyncHandler(async (req, res) => {
 });
 
 const listRoles = (req, res) => {
-    res.json({ success: true, roles: ["hr", "employee", "it", "support", "maintenance"] });
+    res.json({ success: true, roles: ["hr", "employee"] });
 };
 
 const createUser = asyncHandler(async (req, res) => {
@@ -152,8 +150,8 @@ const createUser = asyncHandler(async (req, res) => {
     if (!name?.trim() || !email?.trim() || !password) {
         return res.status(400).json({ success: false, message: "Name, email, and password are required" });
     }
-    if (!["hr", "employee", "it", "support", "maintenance"].includes(role)) {
-        return res.status(400).json({ success: false, message: "Choose HR, employee, IT, support, or maintenance. The system admin is provisioned from ADMIN_EMAIL." });
+    if (!["hr", "employee"].includes(role)) {
+        return res.status(400).json({ success: false, message: "Choose HR or Employee. Payroll is part of HR; IT, Support, and Maintenance are departments." });
     }
     if (password.length < 8) {
         return res.status(400).json({ success: false, message: "Password must contain at least 8 characters" });
@@ -163,19 +161,19 @@ const createUser = asyncHandler(async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
-        await ensureEmployeeExists(client, linkedEmployeeId);
-        if (role === "employee") {
+        if (linkedEmployeeId) await ensureEmployeeExists(client, linkedEmployeeId);
+        if (linkedEmployeeId) {
             const profile = await client.query(
                 "SELECT email, user_id FROM employees WHERE id = $1 FOR UPDATE",
                 [linkedEmployeeId]
             );
-            if (profile.rows[0].email.toLowerCase() !== email.trim().toLowerCase()) {
+            if (role === "employee" && profile.rows[0].email.toLowerCase() !== email.trim().toLowerCase()) {
                 const error = new Error("Employee login email must match the selected profile's work email");
                 error.status = 400;
                 throw error;
             }
             if (profile.rows[0].user_id) {
-                const error = new Error("This employee profile already has a login account. Edit the existing account instead.");
+                const error = new Error("This employee already has a login account. Edit that account in Team Access to assign a different role.");
                 error.status = 409;
                 throw error;
             }
@@ -186,9 +184,7 @@ const createUser = asyncHandler(async (req, res) => {
              RETURNING id, name, email, role, linked_employee_id, created_at`,
             [name.trim(), email.trim(), hash, role, linkedEmployeeId]
         );
-        if (role === "employee") {
-            await client.query("UPDATE employees SET user_id = $1 WHERE id = $2", [result.rows[0].id, linkedEmployeeId]);
-        }
+        if (linkedEmployeeId) await client.query("UPDATE employees SET user_id = $1 WHERE id = $2", [result.rows[0].id, linkedEmployeeId]);
         await client.query("COMMIT");
         res.status(201).json({ success: true, user: result.rows[0] });
     } catch (error) {
@@ -201,7 +197,7 @@ const createUser = asyncHandler(async (req, res) => {
 
 const updateUser = asyncHandler(async (req, res) => {
     const { name, role, password } = req.body;
-    if (role !== undefined && !["admin", "hr", "employee", "it", "support", "maintenance"].includes(role)) {
+    if (role !== undefined && !["admin", "hr", "employee"].includes(role)) {
         return res.status(400).json({ success: false, message: "Choose a valid platform role" });
     }
     if (role !== undefined && String(req.params.id) === String(req.user.id) && role !== "admin") {
@@ -212,12 +208,6 @@ const updateUser = asyncHandler(async (req, res) => {
         if (!currentUser.rowCount) return res.status(404).json({ success: false, message: "User not found" });
         if (role === "admin" || currentUser.rows[0].role === "admin") {
             return res.status(400).json({ success: false, message: "The system admin role can only be provisioned during initial setup" });
-        }
-        if ((role === "employee") !== (currentUser.rows[0].role === "employee")) {
-            return res.status(400).json({
-                success: false,
-                message: "Employee login accounts must be created and managed from the Employees page"
-            });
         }
     }
     const assignments = [];
@@ -251,7 +241,7 @@ const updateUser = asyncHandler(async (req, res) => {
 
 const replaceUser = asyncHandler(async (req, res) => {
     const { name, email, role, password } = req.body;
-    if (!name?.trim() || !email?.trim() || !["admin", "hr", "employee", "it", "support", "maintenance"].includes(role)) {
+    if (!name?.trim() || !email?.trim() || !["admin", "hr", "employee"].includes(role)) {
         return res.status(400).json({ success: false, message: "Name, email, and a valid role are required" });
     }
     if (password && password.length < 8) {
@@ -272,18 +262,18 @@ const replaceUser = asyncHandler(async (req, res) => {
     if ((role === "admin") !== (currentUser.rows[0].role === "admin")) {
         return res.status(400).json({ success: false, message: "The system admin role can only be provisioned during initial setup" });
     }
-    if ((role === "employee") !== (currentUser.rows[0].role === "employee")) {
-        return res.status(400).json({
-            success: false,
-            message: "Employee login accounts must be created and managed from the Employees page"
-        });
-    }
     const linkedEmployeeId = getLinkedEmployeeId(role, req.body.employee_id);
     const client = await pool.connect();
     let employeeLoginInvitation = null;
     try {
         await client.query("BEGIN");
-        await ensureEmployeeExists(client, linkedEmployeeId);
+        if (linkedEmployeeId) await ensureEmployeeExists(client, linkedEmployeeId);
+        const profileOwner = linkedEmployeeId ? await client.query("SELECT user_id FROM employees WHERE id = $1 FOR UPDATE", [linkedEmployeeId]) : { rows: [] };
+        if (profileOwner.rows[0]?.user_id && String(profileOwner.rows[0].user_id) !== String(req.params.id)) {
+            const error = new Error("This employee profile is already connected to another login account");
+            error.status = 409;
+            throw error;
+        }
         const values = [name.trim(), email.trim(), role, linkedEmployeeId];
         let passwordAssignment = "";
         if (password) {
@@ -300,6 +290,12 @@ const replaceUser = asyncHandler(async (req, res) => {
         if (!result.rowCount) {
             await client.query("ROLLBACK");
             return res.status(404).json({ success: false, message: "User not found" });
+        }
+        if (linkedEmployeeId) {
+            await client.query(
+                "UPDATE employees SET user_id = $1 WHERE id = $2 AND (user_id IS NULL OR user_id = $1)",
+                [req.params.id, linkedEmployeeId]
+            );
         }
         if (role === "admin" && linkedEmployeeId) {
             employeeLoginInvitation = await ensureEmployeeLogin(client, linkedEmployeeId);
@@ -341,7 +337,7 @@ const replaceUser = asyncHandler(async (req, res) => {
 
 const updateUserRole = asyncHandler(async (req, res) => {
     const { role } = req.body;
-    if (!["admin", "hr", "employee", "it", "support", "maintenance"].includes(role)) {
+    if (!["admin", "hr", "employee"].includes(role)) {
         return res.status(400).json({ success: false, message: "Choose a valid platform role" });
     }
     if (role === "admin") {
@@ -354,12 +350,6 @@ const updateUserRole = asyncHandler(async (req, res) => {
     if (!currentUser.rowCount) return res.status(404).json({ success: false, message: "User not found" });
     if (currentUser.rows[0].role === "admin") {
         return res.status(403).json({ success: false, message: "The system admin account cannot be deleted here" });
-    }
-    if ((role === "employee") !== (currentUser.rows[0].role === "employee")) {
-        return res.status(400).json({
-            success: false,
-            message: "Employee login accounts must be created and managed from the Employees page"
-        });
     }
     const result = await pool.query(
         `UPDATE users SET role = $1

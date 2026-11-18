@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, ArrowRight, BriefcaseBusiness, CalendarDays, Clock3, Users } from "lucide-react";
+import { Activity, ArrowRight, BriefcaseBusiness, CalendarDays, Clock3, CreditCard, Users } from "lucide-react";
 import { api, getRows } from "../../api.js";
-import { dateLabel } from "../../utils/formatters.js";
+import { currency, dateLabel } from "../../utils/formatters.js";
 import { EmptyState, ErrorBanner, StatCard, StatusBadge } from "../../components/ui.jsx";
 
 export default function HrDashboard({ user, onNavigate }) {
   const [summary, setSummary] = useState(null);
   const [pendingLeaves, setPendingLeaves] = useState([]);
+  const [payrollRecords, setPayrollRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -14,12 +15,14 @@ export default function HrDashboard({ user, onNavigate }) {
     setLoading(true);
     setError("");
     try {
-      const [dashboardResult, leaveResult] = await Promise.all([
+      const [dashboardResult, leaveResult, payrollResult] = await Promise.all([
         api("/dashboard"),
-        api("/leaves")
+        api("/leaves"),
+        api("/payroll")
       ]);
       setSummary(dashboardResult.data);
       setPendingLeaves(getRows(leaveResult).filter((leave) => leave.status === "pending"));
+      setPayrollRecords(getRows(payrollResult));
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -33,7 +36,8 @@ export default function HrDashboard({ user, onNavigate }) {
     { label: "Active employees", value: summary?.activeEmployees ?? "—", icon: Users, tone: "green", trend: `${summary?.totalEmployees ?? "—"} total`, detail: "employee profiles" },
     { label: "Departments", value: summary?.departments ?? "—", icon: BriefcaseBusiness, tone: "blue", trend: "Teams", detail: "in your organization" },
     { label: "Pending leave", value: summary?.pendingLeaves ?? "—", icon: CalendarDays, tone: "amber", trend: "Needs review", detail: "requests awaiting action" },
-    { label: "Present today", value: summary?.presentToday ?? "—", icon: Clock3, tone: "violet", trend: "Today", detail: "attendance records" }
+    { label: "Present today", value: summary?.presentToday ?? "—", icon: Clock3, tone: "violet", trend: "Today", detail: "attendance records" },
+    { label: "Payroll awaiting payment", value: currency(payrollRecords.filter((record) => record.status === "pending").reduce((sum, record) => sum + Number(record.net_salary || 0), 0)), icon: CreditCard, tone: "amber", trend: `${payrollRecords.filter((record) => record.status === "pending").length} records`, detail: "review and process" }
   ];
 
   return (
@@ -55,7 +59,7 @@ export default function HrDashboard({ user, onNavigate }) {
       </section>
 
       {error && <ErrorBanner message={error} retry={refresh} />}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {stats.map((item) => <StatCard key={item.label} {...item} loading={loading} />)}
       </div>
 
@@ -84,7 +88,8 @@ export default function HrDashboard({ user, onNavigate }) {
               { label: "Manage employees", detail: "Profiles, job details and accounts", page: "employees", icon: Users },
               { label: "Review attendance", detail: "Daily records and corrections", page: "attendance", icon: Clock3 },
               { label: "Manage departments", detail: "Teams and employee distribution", page: "departments", icon: BriefcaseBusiness },
-              { label: "Open leave requests", detail: "Approvals and leave balances", page: "leaves", icon: CalendarDays }
+              { label: "Open leave requests", detail: "Approvals and leave balances", page: "leaves", icon: CalendarDays },
+              { label: "Manage payroll", detail: "Calculate salary, process payments and payslips", page: "payroll", icon: CreditCard }
             ].map(({ label, detail, page, icon: Icon }) => (
               <button key={page} onClick={() => onNavigate(page)} className="flex w-full items-center gap-3 rounded-xl border border-emerald-100/70 bg-white p-3 text-left transition hover:border-emerald-300 hover:shadow-sm">
                 <span className="grid h-9 w-9 place-items-center rounded-lg bg-emerald-50 text-emerald-700"><Icon size={16} /></span>

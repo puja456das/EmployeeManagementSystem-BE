@@ -72,17 +72,20 @@ const login = asyncHandler(async (req, res) => {
     if (!identifier || !password) {
         return res.status(400).json({ success: false, message: "Email or employee ID and password are required" });
     }
-    if (role !== undefined && !["admin", "hr", "employee", "it", "support", "maintenance"].includes(role)) {
+    if (role !== undefined && !["admin", "hr", "employee"].includes(role)) {
         return res.status(400).json({ success: false, message: "Choose a valid workspace" });
     }
     const result = await pool.query(
-        `SELECT u.id, u.name, u.email, u.role, u.password_hash
+        `SELECT u.id, u.name, u.email, u.role, u.password_hash,
+                (SELECT COALESCE(d.name, emp.department) FROM employees emp
+                 LEFT JOIN departments d ON d.id = emp.department_id
+                 WHERE emp.user_id = u.id OR emp.id = u.linked_employee_id
+                 ORDER BY CASE WHEN emp.user_id = u.id THEN 0 ELSE 1 END LIMIT 1) AS department
          FROM users u
-         LEFT JOIN employees e ON e.user_id = u.id
-            OR (u.role = 'employee' AND e.id = u.linked_employee_id)
-         WHERE ($2::text IS NULL OR u.role = $2)
+         LEFT JOIN employees e ON e.user_id = u.id OR e.id = u.linked_employee_id
+         WHERE ($2::text IS NULL OR u.role = $2 OR ($2 = 'employee' AND u.role IN ('it', 'support', 'maintenance')) OR ($2 = 'employee' AND u.role = 'hr' AND (u.linked_employee_id IS NOT NULL OR EXISTS (SELECT 1 FROM employees linked WHERE linked.user_id = u.id))) OR ($2 = 'hr' AND u.role = 'payroll_admin'))
            AND (lower(u.email) = lower($1)
-            OR (u.role = 'employee' AND lower(e.employee_code) = lower($1)))
+            OR (u.role IN ('employee', 'it', 'support', 'maintenance', 'hr') AND lower(e.employee_code) = lower($1)))
          ORDER BY CASE WHEN lower(u.email) = lower($1) THEN 0 ELSE 1 END, u.id`,
         [identifier, role || null]
     );
@@ -118,17 +121,58 @@ const login = asyncHandler(async (req, res) => {
         }
         return res.status(401).json({ success: false, message: "Invalid email or password" });
     }
+    if (["it", "support", "maintenance"].includes(user.role)) user.role = "employee";
+    if (user.role === "payroll_admin") user.role = "hr";
+    const accountRole = user.role;
+    if (role === "employee" && accountRole === "hr") user.role = "employee";
+    user.accountRole = accountRole;
     delete user.password_hash;
-    res.json({ success: true, user, token: generateToken(user) });
+    const token = generateToken(user);
+    const responseUser = { ...user, account_role: user.accountRole };
+    delete responseUser.accountRole;
+    res.json({ success: true, user: responseUser, token });
 });
 
 const me = asyncHandler(async (req, res) => {
     const result = await pool.query(
-        "SELECT id, name, email, role, created_at FROM users WHERE id = $1",
+        `SELECT u.id, u.name, u.email, u.role, u.created_at,
+                (SELECT COALESCE(d.name, e.department) FROM employees e
+                 LEFT JOIN departments d ON d.id = e.department_id
+                 WHERE e.user_id = u.id OR e.id = u.linked_employee_id
+                 ORDER BY CASE WHEN e.user_id = u.id THEN 0 ELSE 1 END LIMIT 1) AS department
+         FROM users u WHERE u.id = $1`,
         [req.user.id]
     );
     if (!result.rowCount) return res.status(404).json({ success: false, message: "User not found" });
-    res.json({ success: true, user: result.rows[0] });
+    res.json({ success: true, user: { ...result.rows[0], role: req.user.role, account_role: req.user.accountRole } });
+});
+
+const switchWorkspace = asyncHandler(async (req, res) => {
+    const targetRole = req.body.role;
+    if (!['hr', 'employee'].includes(targetRole)) {
+        return res.status(400).json({ success: false, message: "Choose HR or Employee workspace." });
+    }
+    const result = await pool.query(
+        `SELECT u.id, u.name, u.email, u.role, u.linked_employee_id,
+                (SELECT e.id FROM employees e WHERE e.user_id = u.id LIMIT 1) AS primary_employee_id
+         FROM users u WHERE u.id = $1`,
+        [req.user.id]
+    );
+    if (!result.rowCount) return res.status(404).json({ success: false, message: "User not found" });
+    const account = result.rows[0];
+    if (!['hr', 'payroll_admin'].includes(account.role) || !['hr', 'employee'].includes(targetRole)) {
+        return res.status(403).json({ success: false, message: "Workspace switching is available to linked HR accounts." });
+    }
+    if (targetRole === 'employee' && !account.linked_employee_id && !account.primary_employee_id) {
+        return res.status(403).json({ success: false, message: "Link an employee profile to this HR account before switching workspaces." });
+    }
+    const accountRole = account.role === 'payroll_admin' ? 'hr' : account.role;
+    const tokenUser = { id: account.id, name: account.name, email: account.email, role: targetRole, accountRole };
+    res.json({
+        success: true,
+        user: { id: account.id, name: account.name, email: account.email, role: targetRole, account_role: accountRole },
+        token: generateToken(tokenUser)
+    });
 });
 
 const changePassword = asyncHandler(async (req, res) => {
@@ -154,11 +198,11 @@ const requestPasswordReset = asyncHandler(async (req, res) => {
     if (!email) {
         return res.status(400).json({ success: false, message: "Enter the email address for your account" });
     }
-    if (role !== undefined && !["admin", "hr", "employee", "it", "support", "maintenance"].includes(role)) {
+    if (role !== undefined && !["admin", "hr", "employee"].includes(role)) {
         return res.status(400).json({ success: false, message: "Choose a valid account type" });
     }
     const result = await pool.query(
-        "SELECT id, name, email FROM users WHERE lower(email) = $1 AND ($2::text IS NULL OR role = $2)",
+        "SELECT id, name, email FROM users WHERE lower(email) = $1 AND ($2::text IS NULL OR role = $2 OR ($2 = 'employee' AND role IN ('it', 'support', 'maintenance')) OR ($2 = 'hr' AND role = 'payroll_admin'))",
         [email, role || null]
     );
     if (!role && result.rowCount > 1) {
@@ -227,11 +271,11 @@ const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
     if (!email || !/^\d{6}$/.test(code)) {
         return res.status(400).json({ success: false, message: "Enter the email address and 6-digit verification code" });
     }
-    if (role !== undefined && !["admin", "hr", "employee", "it", "support", "maintenance"].includes(role)) {
+    if (role !== undefined && !["admin", "hr", "employee"].includes(role)) {
         return res.status(400).json({ success: false, message: "Choose a valid account type" });
     }
     const userResult = await pool.query(
-        "SELECT id FROM users WHERE lower(email) = $1 AND ($2::text IS NULL OR role = $2)",
+        "SELECT id FROM users WHERE lower(email) = $1 AND ($2::text IS NULL OR role = $2 OR ($2 = 'employee' AND role IN ('it', 'support', 'maintenance')) OR ($2 = 'hr' AND role = 'payroll_admin'))",
         [email, role || null]
     );
     if (!role && userResult.rowCount > 1) {
@@ -307,7 +351,7 @@ const verifyEmployeeInviteOtp = asyncHandler(async (req, res) => {
         return res.status(400).json({ success: false, message: "Choose a valid account workspace" });
     }
     const userResult = await pool.query(
-        "SELECT id, role FROM users WHERE lower(email) = $1 AND role = $2",
+        "SELECT id, role FROM users WHERE lower(email) = $1 AND (role = $2 OR ($2 = 'employee' AND role IN ('it', 'support', 'maintenance', 'hr', 'payroll_admin')))",
         [email, role]
     );
     if (!userResult.rowCount) {
@@ -369,7 +413,7 @@ const verifyEmployeeInviteOtp = asyncHandler(async (req, res) => {
     res.json({
         success: true,
         token: resetToken,
-        role: userResult.rows[0].role,
+        role: ["it", "support", "maintenance"].includes(userResult.rows[0].role) ? "employee" : userResult.rows[0].role === "payroll_admin" ? "hr" : userResult.rows[0].role,
         message: "Email verified. You can now set your password."
     });
 });
@@ -422,6 +466,7 @@ module.exports = {
     register,
     login,
     me,
+    switchWorkspace,
     changePassword,
     requestPasswordReset,
     verifyPasswordResetOtp,

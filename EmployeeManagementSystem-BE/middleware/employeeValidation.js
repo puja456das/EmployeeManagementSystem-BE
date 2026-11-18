@@ -42,10 +42,16 @@ const validateEmployee = [
         .isIn(["Active", "Inactive"])
         .withMessage("Choose Active or Inactive status"),
 
+    body("casual_leave_days")
+        .optional({ values: "falsy" })
+        .isInt({ min: 12, max: 12 })
+        .withMessage("Casual leave entitlement is fixed at 12 days per calendar year")
+        .toInt(),
+
     body("annual_paid_leave_days")
         .optional({ values: "falsy" })
         .isInt({ min: 0, max: 365 })
-        .withMessage("Annual paid leave allowance must be between 0 and 365 days")
+        .withMessage("Casual leave allowance must be between 0 and 365 days")
         .toInt(),
 
     (req, res, next) => {

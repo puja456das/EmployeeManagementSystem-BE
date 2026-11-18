@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowRight, Bell, ShieldCheck, Users } from "lucide-react";
+import { ArrowRight, BriefcaseBusiness, LifeBuoy, Megaphone, ShieldCheck, Users } from "lucide-react";
 import { api, getRows } from "../../api.js";
-import { dateLabel } from "../../utils/formatters.js";
 import { EmptyState, ErrorBanner, StatCard } from "../../components/ui.jsx";
 
 export default function ControlCenter({ user, onNavigate }) {
   const [summary, setSummary] = useState(null);
   const [hrAccounts, setHrAccounts] = useState([]);
-  const [announcements, setAnnouncements] = useState([]);
+  const [serviceSummary, setServiceSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -15,14 +14,14 @@ export default function ControlCenter({ user, onNavigate }) {
     setLoading(true);
     setError("");
     try {
-      const [dashboardResult, userResult, announcementResult] = await Promise.all([
+      const [dashboardResult, userResult, serviceResult] = await Promise.all([
         api("/dashboard"),
         api("/users"),
-        api("/announcements")
+        api("/service-requests/summary")
       ]);
       setSummary(dashboardResult.data);
       setHrAccounts(getRows(userResult, "users").filter((account) => account.role === "hr"));
-      setAnnouncements(getRows(announcementResult));
+      setServiceSummary(serviceResult.data);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -33,10 +32,10 @@ export default function ControlCenter({ user, onNavigate }) {
   useEffect(() => { refresh(); }, [refresh]);
 
   const stats = [
-    { label: "HR accounts", value: hrAccounts.length, icon: ShieldCheck, tone: "violet", trend: "People operations", detail: "platform access" },
-    { label: "Employee profiles", value: summary?.totalEmployees ?? "—", icon: Users, tone: "blue", trend: "Managed by HR", detail: "in the organization" },
-    { label: "Departments", value: summary?.departments ?? "—", icon: Users, tone: "green", trend: "Organization", detail: "teams configured" },
-    { label: "HR announcements", value: announcements.filter((item) => item.created_by_user_id != null && String(item.created_by_user_id) === String(user.id)).length, icon: Bell, tone: "amber", trend: "System updates", detail: "sent to HR accounts" }
+    { label: "HR accounts", value: hrAccounts.length, icon: ShieldCheck, tone: "violet", trend: "People operations", detail: "accounts with HR access" },
+    { label: "Active employees", value: summary?.activeEmployees ?? "—", icon: Users, tone: "blue", trend: "Organization", detail: `${summary?.totalEmployees ?? "—"} employee profiles` },
+    { label: "Departments", value: summary?.departments ?? "—", icon: BriefcaseBusiness, tone: "green", trend: "Organization structure", detail: "teams configured" },
+    { label: "Open service requests", value: serviceSummary?.counts?.open ?? "—", icon: LifeBuoy, tone: "amber", trend: "All service teams", detail: "awaiting ownership" }
   ];
 
   return <div className="space-y-7">
@@ -46,7 +45,7 @@ export default function ControlCenter({ user, onNavigate }) {
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[.17em] text-indigo-200">System administration</p>
           <h1 className="mt-2 text-[27px] font-bold tracking-tight md:text-[32px]">Admin control center</h1>
-          <p className="mt-1 text-xs text-white/70">Manage HR access and send platform updates. Daily people operations live in the HR platform.</p>
+          <p className="mt-1 text-xs text-white/70">Oversee organization access, structure, and service health. HR manages day-to-day employee operations.</p>
         </div>
         <button onClick={refresh} className="self-start rounded-xl border border-white/20 bg-white/10 px-3.5 py-2.5 text-[11px] font-semibold text-white hover:bg-white/20 sm:self-auto">Refresh overview</button>
       </div>
@@ -61,7 +60,7 @@ export default function ControlCenter({ user, onNavigate }) {
     <div className="grid gap-5 xl:grid-cols-[1.25fr_1fr]">
       <section className="rounded-2xl border border-slate-100 bg-white shadow-card">
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <div><h2 className="text-sm font-bold text-ink">HR platform access</h2><p className="mt-1 text-[10px] text-slate-400">HR accounts responsible for day-to-day operations</p></div>
+          <div><h2 className="text-sm font-bold text-ink">HR team access</h2><p className="mt-1 text-[10px] text-slate-400">Accounts responsible for day-to-day people operations</p></div>
           <button onClick={() => onNavigate("users")} className="text-[10px] font-bold text-indigo-700 hover:underline">Manage <ArrowRight size={13} className="ml-1 inline" /></button>
         </div>
         {hrAccounts.length ? <div className="divide-y divide-slate-50">
@@ -78,9 +77,10 @@ export default function ControlCenter({ user, onNavigate }) {
         <p className="mt-1 text-[10px] text-slate-400">System-level tasks reserved for the administrator.</p>
         <div className="mt-5 space-y-2">
           {[
-            { label: "Manage user access", detail: "Create or update HR accounts", page: "users", icon: ShieldCheck },
-            { label: "Message selected HR", detail: "Send a private platform announcement", page: "announcements", icon: Bell },
-            { label: "Admin profile", detail: "Update your own account details", page: "profile", icon: Users }
+            { label: "Manage team access", detail: "Grant HR, payroll, and service-team roles", page: "users", icon: ShieldCheck },
+            { label: "Organization structure", detail: "Maintain departments and employee directory", page: "departments", icon: BriefcaseBusiness },
+            { label: "Publish an announcement", detail: "Send an in-app update to selected HR accounts", page: "announcements", icon: Megaphone },
+            { label: "Review service desk", detail: "Monitor requests across all service teams", page: "serviceRequests", icon: LifeBuoy }
           ].map(({ label, detail, page, icon: Icon }) => <button key={page} onClick={() => onNavigate(page)} className="flex w-full items-center gap-3 rounded-xl border border-indigo-100 bg-white p-3 text-left transition hover:border-indigo-300 hover:shadow-sm">
             <span className="grid h-9 w-9 place-items-center rounded-lg bg-indigo-50 text-indigo-700"><Icon size={16} /></span>
             <span className="min-w-0 flex-1"><span className="block text-[11px] font-bold text-ink">{label}</span><span className="mt-1 block text-[9px] text-slate-400">{detail}</span></span>

@@ -1,17 +1,15 @@
 const pool = require("../config/db");
 const asyncHandler = require("../utils/asyncHandler");
 const categories = ["it", "support", "maintenance"];
-const operatorCategory = (role) => categories.includes(role) ? role : null;
-
+// One employee queue serves every team. Departments describe a request, but do
+// not create separate inboxes or dashboards. HR and Admin can monitor the full queue.
 const getScope = (user) => {
-    const category = operatorCategory(user.role);
-    if (user.role === "admin") return { clause: "TRUE", values: [] };
-    if (category) return { clause: "r.category = $1", values: [category] };
-    return { clause: "r.requester_user_id = $1", values: [user.id] };
+    if (["admin", "hr", "employee"].includes(user.role)) return { clause: "TRUE", values: [] };
+    return { clause: "FALSE", values: [] };
 };
 
 const listRequests = asyncHandler(async (req, res) => {
-    const scope = getScope(req.user);
+    const scope = await getScope(req.user);
     const result = await pool.query(
         `SELECT r.*, requester.name AS requester_name, requester.email AS requester_email,
                 assignee.name AS assignee_name
@@ -28,7 +26,7 @@ const listRequests = asyncHandler(async (req, res) => {
 });
 
 const getSummary = asyncHandler(async (req, res) => {
-    const scope = getScope(req.user);
+    const scope = await getScope(req.user);
     const result = await pool.query(
         `SELECT status, COUNT(*)::int AS count
          FROM service_requests r WHERE ${scope.clause} GROUP BY status`,
@@ -40,6 +38,9 @@ const getSummary = asyncHandler(async (req, res) => {
 });
 
 const createRequest = asyncHandler(async (req, res) => {
+    if (!['hr', 'employee'].includes(req.user.role)) {
+        return res.status(403).json({ success: false, message: "Service requests can be submitted by HR and employee accounts." });
+    }
     const category = String(req.body.category || "").toLowerCase();
     const title = String(req.body.title || "").trim();
     const description = String(req.body.description || "").trim();
@@ -56,24 +57,23 @@ const createRequest = asyncHandler(async (req, res) => {
 });
 
 const updateRequest = asyncHandler(async (req, res) => {
+    if (req.user.role !== "employee") {
+        return res.status(403).json({ success: false, message: "Only employees can process service requests. HR and Admin have view access." });
+    }
     const status = String(req.body.status || "").toLowerCase();
     if (!["open", "in_progress", "resolved", "closed"].includes(status)) {
         return res.status(400).json({ success: false, message: "Choose a valid request status." });
-    }
-    const category = operatorCategory(req.user.role);
-    if (!category && req.user.role !== "admin") {
-        return res.status(403).json({ success: false, message: "Only the service team can update request status." });
     }
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
         const current = await client.query(
-            `SELECT * FROM service_requests WHERE id = $1 AND ($2::text IS NULL OR category = $2) FOR UPDATE`,
-            [req.params.id, category]
+            `SELECT * FROM service_requests WHERE id = $1 FOR UPDATE`,
+            [req.params.id]
         );
         if (!current.rowCount) {
             await client.query("ROLLBACK");
-            return res.status(404).json({ success: false, message: "Request not found in your queue." });
+            return res.status(404).json({ success: false, message: "Request not found in the employee queue." });
         }
         const allowedNext = { open: ["in_progress"], in_progress: ["resolved"], resolved: ["closed"], closed: [] };
         if (!allowedNext[current.rows[0].status].includes(status)) {

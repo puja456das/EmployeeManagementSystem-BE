@@ -18,8 +18,9 @@ export default function AuthGate({ children }) {
     return () => window.removeEventListener("ems:unauthorized", clearSession);
   }, [isEmployeeSetup]);
   const login = (result) => { localStorage.setItem("ems-token", result.token); setUser(result.user); };
+  const switchWorkspace = async (role) => login(await api("/auth/switch-workspace", { method: "POST", body: { role } }));
   const logout = () => { localStorage.removeItem("ems-token"); setUser(null); setShowLogin(false); };
   if (checking) return <div className="grid min-h-screen place-items-center bg-canvas text-sm text-muted">Loading your workspace…</div>;
   if (!user) return showLogin ? <Login onLogin={login} onBack={() => setShowLogin(false)} /> : <AuthHome onLogin={() => setShowLogin(true)} />;
-  return children({ user, logout });
+  return children({ user, logout, switchWorkspace });
 }

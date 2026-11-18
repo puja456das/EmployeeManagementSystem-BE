@@ -8,11 +8,24 @@ const { encryptBankAccount, maskBankAccount } = require("../utils/bankDetails");
 const { validateProfileImage } = require("../utils/profileImage");
 
 const employeeSelection = `id, employee_code, user_id, name, email, department, department_id, salary, phone, designation,
-    joining_date, status, created_at, address, emergency_contact_name, emergency_contact_phone, annual_paid_leave_days,
+    joining_date, status, created_at, address, emergency_contact_name, emergency_contact_phone,
+    casual_leave_days, casual_leave_days AS annual_paid_leave_days,
     bank_account_encrypted, profile_image IS NOT NULL AS has_profile_image`;
+const employeeAccountSetupState = `COALESCE((
+    SELECT NOT EXISTS (
+               SELECT 1 FROM password_reset_otps invite
+               WHERE invite.user_id = linked_user.id AND invite.purpose = 'employee_invite'
+           ) OR EXISTS (
+               SELECT 1 FROM password_reset_tokens completed_setup
+               WHERE completed_setup.user_id = linked_user.id AND completed_setup.used_at IS NOT NULL
+           )
+    FROM users linked_user
+    WHERE linked_user.id = e.user_id OR linked_user.linked_employee_id = e.id
+    ORDER BY CASE WHEN linked_user.id = e.user_id THEN 0 ELSE 1 END,
+             CASE WHEN linked_user.role IN ('hr', 'payroll_admin') THEN 0 ELSE 1 END
+    LIMIT 1
+), FALSE) AS account_setup_complete`;
 
-const isHrDepartment = (name) => ["hr", "human resources", "human resource"]
-    .includes(String(name || "").trim().toLowerCase());
 const isValidDateOnly = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
     Number.isFinite(new Date(`${value}T00:00:00.000Z`).getTime()) && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
 
@@ -82,11 +95,13 @@ const createEmployeeInviteCode = async (client, userId) => {
 const getEmployees = asyncHandler(async (req, res) => {
     const result = await pool.query(
         `SELECT ${employeeSelection},
+                ${employeeAccountSetupState},
                 COALESCE((
                     SELECT linked_user.role
                     FROM users linked_user
                     WHERE linked_user.id = e.user_id OR linked_user.linked_employee_id = e.id
-                    ORDER BY CASE WHEN linked_user.role = 'hr' THEN 0 ELSE 1 END
+                    ORDER BY CASE WHEN linked_user.id = e.user_id THEN 0 ELSE 1 END,
+                             CASE WHEN linked_user.role IN ('hr', 'payroll_admin') THEN 0 ELSE 1 END
                     LIMIT 1
                 ), 'employee') AS login_role
          FROM employees e ORDER BY e.id DESC`
@@ -97,11 +112,13 @@ const getEmployees = asyncHandler(async (req, res) => {
 const getEmployeeById = asyncHandler(async (req, res) => {
     const result = await pool.query(
         `SELECT ${employeeSelection},
+                ${employeeAccountSetupState},
                 COALESCE((
                     SELECT linked_user.role
                     FROM users linked_user
                     WHERE linked_user.id = e.user_id OR linked_user.linked_employee_id = e.id
-                    ORDER BY CASE WHEN linked_user.role = 'hr' THEN 0 ELSE 1 END
+                    ORDER BY CASE WHEN linked_user.id = e.user_id THEN 0 ELSE 1 END,
+                             CASE WHEN linked_user.role = 'hr' THEN 0 ELSE 1 END
                     LIMIT 1
                 ), 'employee') AS login_role
          FROM employees e WHERE e.id = $1`,
@@ -129,13 +146,13 @@ const addEmployee = asyncHandler(async (req, res) => {
     const {
         name, email, department, salary, phone, designation, joining_date, status,
         address, emergency_contact_name, emergency_contact_phone, bank_account_number,
-        annual_paid_leave_days
     } = req.body;
     const profileImageMime = validateProfileImage(req.file);
     const client = await pool.connect();
     let employee;
     let accountRole;
     let invitation;
+    let isHrSelfProfile = false;
     try {
         await client.query("BEGIN");
         const existingEmployee = await client.query(
@@ -149,49 +166,77 @@ const addEmployee = asyncHandler(async (req, res) => {
             error.status = 409;
             throw error;
         }
+        if (req.user.role === "hr" && String(email || "").trim().toLowerCase() === String(req.user.email || "").trim().toLowerCase()) {
+            const hrAccount = await client.query(
+                `SELECT u.id, u.linked_employee_id,
+                        EXISTS (SELECT 1 FROM employees e WHERE e.user_id = u.id OR e.id = u.linked_employee_id) AS has_employee_profile
+                 FROM users u WHERE u.id = $1 FOR UPDATE`,
+                [req.user.id]
+            );
+            if (!hrAccount.rowCount) {
+                const error = new Error("HR login account could not be found");
+                error.status = 404;
+                throw error;
+            }
+            if (hrAccount.rows[0].has_employee_profile) {
+                const error = new Error("This HR account already has a linked employee profile. Edit that profile to keep the same Employee ID.");
+                error.status = 409;
+                throw error;
+            }
+            isHrSelfProfile = true;
+        }
         const selectedDepartment = await resolveDepartment(client, req.body.department_id, department);
+        if (!selectedDepartment.id) {
+            const error = new Error("Create and choose a department before adding an employee");
+            error.status = 400;
+            throw error;
+        }
         if (selectedDepartment.name?.trim().toLowerCase() === "admin") {
             const error = new Error("Employees cannot be assigned to the Admin department");
             error.status = 400;
             throw error;
         }
-        accountRole = isHrDepartment(selectedDepartment.name) ? "hr" : "employee";
-        const passwordHash = await bcrypt.hash(crypto.randomBytes(48).toString("hex"), 12);
-        const userResult = await client.query(
-            `INSERT INTO users (name, email, password_hash, role)
-             VALUES ($1, lower($2), $3, $4)
-             RETURNING id`,
-            [name.trim(), email.trim(), passwordHash, accountRole]
-        );
+        // Department is organizational data; it must never grant HR application permissions.
+        accountRole = isHrSelfProfile ? "hr" : "employee";
+        let employeeUserId;
+        if (isHrSelfProfile) {
+            employeeUserId = req.user.id;
+        } else {
+            const passwordHash = await bcrypt.hash(crypto.randomBytes(48).toString("hex"), 12);
+            const userResult = await client.query(
+                `INSERT INTO users (name, email, password_hash, role)
+                 VALUES ($1, lower($2), $3, $4)
+                 RETURNING id`,
+                [name.trim(), email.trim(), passwordHash, accountRole]
+            );
+            employeeUserId = userResult.rows[0].id;
+        }
         const result = await client.query(
             `INSERT INTO employees
              (employee_code, user_id, name, email, department, department_id, salary, phone, designation, joining_date,
               status, address, emergency_contact_name, emergency_contact_phone, bank_account_encrypted,
-              profile_image, profile_image_mime, annual_paid_leave_days)
-             VALUES ($1, $2, $3, lower($4), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+              profile_image, profile_image_mime, annual_paid_leave_days, casual_leave_days)
+             VALUES ($1, $2, $3, lower($4), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 12, 12)
              RETURNING ${employeeSelection}`,
             [
-                generateEmployeeId(), userResult.rows[0].id, name.trim(), email.trim(),
+                generateEmployeeId(), employeeUserId, name.trim(), email.trim(),
                 selectedDepartment.name, selectedDepartment.id, salary, phone || null, designation || null, joining_date || null, status || "Active",
                 address || null, emergency_contact_name || null, emergency_contact_phone || null,
-                encryptBankAccount(bank_account_number), req.file?.buffer || null, profileImageMime,
-                annual_paid_leave_days === undefined ? 12 : Number(annual_paid_leave_days)
+                encryptBankAccount(bank_account_number), req.file?.buffer || null, profileImageMime
             ]
         );
         employee = result.rows[0];
-        if (accountRole === "hr") {
-            await client.query(
-                "UPDATE users SET linked_employee_id = $1 WHERE id = $2",
-                [employee.id, userResult.rows[0].id]
-            );
+        if (isHrSelfProfile) {
+            await client.query("UPDATE users SET linked_employee_id = $1 WHERE id = $2", [employee.id, employeeUserId]);
+        } else {
+            const code = await createEmployeeInviteCode(client, employeeUserId);
+            invitation = {
+                user: { name: employee.name, email: employee.email },
+                employee,
+                code,
+                role: accountRole
+            };
         }
-        const code = await createEmployeeInviteCode(client, userResult.rows[0].id);
-        invitation = {
-            user: { name: employee.name, email: employee.email },
-            employee,
-            code,
-            role: accountRole
-        };
         await client.query("COMMIT");
     } catch (error) {
         await client.query("ROLLBACK");
@@ -221,22 +266,24 @@ const addEmployee = asyncHandler(async (req, res) => {
     }
 
     let invitationSent = true;
-    try {
-        await sendEmployeeInvite(invitation.user, invitation.employee, invitation.code, invitation.role);
-    } catch (error) {
-        invitationSent = false;
-        console.error("Employee was created, but the setup invitation could not be delivered:", error.message);
+    if (invitation) {
+        try {
+            await sendEmployeeInvite(invitation.user, invitation.employee, invitation.code, invitation.role);
+        } catch (error) {
+            invitationSent = false;
+            console.error("Employee was created, but the setup invitation could not be delivered:", error.message);
+        }
     }
 
     res.status(201).json({
         success: true,
         invitationSent,
-        message: invitationSent
-            ? accountRole === "hr"
-                ? "HR account created and setup code emailed to the HR employee"
-                : "Employee account created and setup code emailed to the employee"
+        message: isHrSelfProfile
+            ? "Your employee profile is linked to your HR login. Use the same Employee ID in your Employee workspace."
+            : invitationSent
+            ? "Employee profile and self-service login created; application roles are assigned separately in Team Access"
             : "Employee account created, but the setup email could not be delivered. Fix SMTP and resend the invitation from the Employees page.",
-        employee: { ...presentEmployee(employee), login_role: accountRole }
+        employee: { ...presentEmployee(employee), login_role: accountRole, selfLinked: isHrSelfProfile }
     });
 });
 
@@ -247,14 +294,14 @@ const resendEmployeeInvite = asyncHandler(async (req, res) => {
                 e.email AS employee_email
          FROM employees e
          JOIN users u ON (u.id = e.user_id OR u.linked_employee_id = e.id)
-         WHERE e.id = $1 AND u.role IN ('employee', 'hr')
+         WHERE e.id = $1 AND u.role IN ('employee', 'hr', 'payroll_admin', 'it', 'support', 'maintenance')
          ORDER BY CASE WHEN u.id = e.user_id THEN 0 ELSE 1 END,
-                  CASE WHEN u.role = 'hr' THEN 0 ELSE 1 END
+                  CASE WHEN u.role IN ('hr', 'payroll_admin') THEN 0 ELSE 1 END
          LIMIT 1`,
         [req.params.id]
     );
     if (!employeeResult.rowCount) {
-        return res.status(404).json({ success: false, message: "No employee or HR login is linked to this employee profile" });
+        return res.status(404).json({ success: false, message: "No employee login is linked to this employee profile" });
     }
 
     const account = employeeResult.rows[0];
@@ -270,6 +317,20 @@ const resendEmployeeInvite = asyncHandler(async (req, res) => {
             await client.query("ROLLBACK");
             return res.status(404).json({ success: false, message: "The linked login account no longer exists" });
         }
+        const setupState = await client.query(
+            `SELECT NOT EXISTS (
+                 SELECT 1 FROM password_reset_otps invite
+                 WHERE invite.user_id = $1 AND invite.purpose = 'employee_invite'
+             ) OR EXISTS (
+                 SELECT 1 FROM password_reset_tokens completed_setup
+                 WHERE completed_setup.user_id = $1 AND completed_setup.used_at IS NOT NULL
+             ) AS complete`,
+            [account.user_id]
+        );
+        if (setupState.rows[0].complete) {
+            await client.query("ROLLBACK");
+            return res.status(409).json({ success: false, message: "This account is already set up. No new invitation was sent." });
+        }
         code = await createEmployeeInviteCode(client, account.user_id);
         await client.query("COMMIT");
     } catch (error) {
@@ -283,7 +344,7 @@ const resendEmployeeInvite = asyncHandler(async (req, res) => {
         { name: account.name, email: account.email },
         { employee_code: account.employee_code },
         code,
-        account.role
+        account.role === "payroll_admin" ? "hr" : account.role
     );
     res.json({
         success: true,
@@ -295,7 +356,6 @@ const updateEmployee = asyncHandler(async (req, res) => {
     const {
         name, email, department, salary, phone, designation, joining_date, status,
         address, emergency_contact_name, emergency_contact_phone, bank_account_number,
-        annual_paid_leave_days
     } = req.body;
     const profileImageMime = validateProfileImage(req.file);
     const client = await pool.connect();
@@ -303,6 +363,11 @@ const updateEmployee = asyncHandler(async (req, res) => {
     try {
         await client.query("BEGIN");
         const selectedDepartment = await resolveDepartment(client, req.body.department_id, department);
+        if (!selectedDepartment.id) {
+            const error = new Error("Choose a department for this employee");
+            error.status = 400;
+            throw error;
+        }
         if (selectedDepartment.name?.trim().toLowerCase() === "admin") {
             const error = new Error("Employees cannot be assigned to the Admin department");
             error.status = 400;
@@ -316,16 +381,15 @@ const updateEmployee = asyncHandler(async (req, res) => {
                  bank_account_encrypted = COALESCE($13, bank_account_encrypted),
                  profile_image = COALESCE($14, profile_image),
                  profile_image_mime = COALESCE($15, profile_image_mime),
-                 annual_paid_leave_days = $16
-             WHERE id = $17
+                 annual_paid_leave_days = 12, casual_leave_days = 12
+             WHERE id = $16
              RETURNING ${employeeSelection}`,
             [
                 name.trim(), email.trim().toLowerCase(), selectedDepartment.name, selectedDepartment.id, salary,
                 phone || null, designation || null, joining_date || null, status || "Active",
                 address || null, emergency_contact_name || null, emergency_contact_phone || null,
                 String(bank_account_number || "").trim() ? encryptBankAccount(bank_account_number) : null,
-                req.file?.buffer || null, profileImageMime,
-                annual_paid_leave_days === undefined ? 12 : Number(annual_paid_leave_days), req.params.id
+                req.file?.buffer || null, profileImageMime, req.params.id
             ]
         );
         if (!result.rowCount) {
@@ -354,6 +418,9 @@ const updateEmployee = asyncHandler(async (req, res) => {
 });
 
 const patchEmployee = asyncHandler(async (req, res) => {
+    if (req.body.casual_leave_days === undefined && req.body.annual_paid_leave_days !== undefined) {
+        req.body.casual_leave_days = req.body.annual_paid_leave_days;
+    }
     const profileImageMime = validateProfileImage(req.file);
     const textLimits = { name: 150, department: 150, designation: 150, phone: 40, emergency_contact_name: 150, emergency_contact_phone: 40 };
     for (const [field, max] of Object.entries(textLimits)) {
@@ -373,15 +440,12 @@ const patchEmployee = asyncHandler(async (req, res) => {
     if (req.body.status !== undefined && !["Active", "Inactive"].includes(req.body.status)) {
         return res.status(400).json({ success: false, message: "Choose Active or Inactive status" });
     }
-    if (req.body.annual_paid_leave_days !== undefined &&
-        (!Number.isInteger(Number(req.body.annual_paid_leave_days)) ||
-            Number(req.body.annual_paid_leave_days) < 0 ||
-            Number(req.body.annual_paid_leave_days) > 365)) {
-        return res.status(400).json({ success: false, message: "Annual paid leave allowance must be between 0 and 365 days" });
+    if (req.body.casual_leave_days !== undefined && Number(req.body.casual_leave_days) !== 12) {
+        return res.status(400).json({ success: false, message: "Casual leave entitlement is fixed at 12 days per calendar year" });
     }
     const allowedFields = new Set([
         "name", "email", "department", "salary", "phone", "designation", "joining_date", "status",
-        "address", "emergency_contact_name", "emergency_contact_phone", "annual_paid_leave_days"
+        "address", "emergency_contact_name", "emergency_contact_phone", "casual_leave_days"
     ]);
     const hasDepartment = Object.hasOwn(req.body || {}, "department") || Object.hasOwn(req.body || {}, "department_id");
     const fields = Object.keys(req.body || {}).filter((field) => allowedFields.has(field));
@@ -390,7 +454,7 @@ const patchEmployee = asyncHandler(async (req, res) => {
     }
     const values = fields.map((field) => field === "email"
         ? String(req.body[field]).trim().toLowerCase()
-        : field === "annual_paid_leave_days" ? Number(req.body[field]) : req.body[field]);
+        : field === "casual_leave_days" ? Number(req.body[field]) : req.body[field]);
     if (req.body.bank_account_number !== undefined) {
         if (String(req.body.bank_account_number).trim()) {
             fields.push("bank_account_encrypted");

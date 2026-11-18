@@ -2,16 +2,12 @@ const pool = require("../config/db");
 const asyncHandler = require("../utils/asyncHandler");
 
 const getDashboard = asyncHandler(async (req, res) => {
-    const [employees, totalEmployees, departments, pendingLeaves, presentToday, payroll] = await Promise.all([
+    const [employees, totalEmployees, departments, pendingLeaves, presentToday] = await Promise.all([
         pool.query("SELECT COUNT(*)::int AS count FROM employees WHERE status = 'Active'"),
         pool.query("SELECT COUNT(*)::int AS count FROM employees"),
         pool.query("SELECT COUNT(*)::int AS count FROM departments"),
         pool.query("SELECT COUNT(*)::int AS count FROM leaves WHERE status = 'pending'"),
-        pool.query("SELECT COUNT(*)::int AS count FROM attendance WHERE work_date = CURRENT_DATE"),
-        pool.query(
-            `SELECT COALESCE(SUM(net_salary), 0)::numeric AS total FROM payroll
-             WHERE date_trunc('month', pay_period) = date_trunc('month', CURRENT_DATE)`
-        )
+        pool.query("SELECT COUNT(*)::int AS count FROM attendance WHERE work_date = CURRENT_DATE")
     ]);
     res.json({
         success: true,
@@ -20,8 +16,7 @@ const getDashboard = asyncHandler(async (req, res) => {
             totalEmployees: totalEmployees.rows[0].count,
             departments: departments.rows[0].count,
             pendingLeaves: pendingLeaves.rows[0].count,
-            presentToday: presentToday.rows[0].count,
-            monthlyPayroll: payroll.rows[0].total
+            presentToday: presentToday.rows[0].count
         }
     });
 });

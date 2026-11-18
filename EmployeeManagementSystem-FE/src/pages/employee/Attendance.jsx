@@ -9,6 +9,7 @@ import { dateLabel, dateTimeLabel, localDateKey } from "../../utils/formatters.j
 export default function Attendance() {
   const [records, setRecords] = useState([]);
   const [todayRecords, setTodayRecords] = useState([]);
+  const [profile, setProfile] = useState(null);
   const [period, setPeriod] = useState({ year: String(new Date().getFullYear()), month: "", date: "" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -20,12 +21,14 @@ export default function Attendance() {
       const params = new URLSearchParams({ year: period.year });
       if (period.month) params.set("month", period.month);
       if (period.date) params.set("date", period.date);
-      const [attendanceResult, todayResult] = await Promise.all([
+      const [attendanceResult, todayResult, profileResult] = await Promise.all([
         api(`/attendance/mine?${params.toString()}`),
-        api(`/attendance/mine?date=${localDateKey()}`)
+        api(`/attendance/mine?date=${localDateKey()}`),
+        api("/profile")
       ]);
       setRecords(getRows(attendanceResult));
       setTodayRecords(getRows(todayResult));
+      setProfile(profileResult.profile);
     } catch (requestError) { setError(requestError.message); }
     finally { setLoading(false); }
   }, [period]);
@@ -41,11 +44,13 @@ export default function Attendance() {
   }), [records]);
 
   return <div className="space-y-6">
-    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-[11px] font-bold uppercase tracking-[.16em] text-brand">Your workspace</p><h1 className="mt-2 text-[27px] font-bold tracking-tight text-ink">My attendance</h1><p className="mt-1 text-xs text-slate-400">Record today’s check-in and review your work history.</p></div><AttendanceControls onDone={loadAttendance} attendance={todayRecords} /></div>
+    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-[11px] font-bold uppercase tracking-[.16em] text-brand">Your workspace</p><h1 className="mt-2 text-[27px] font-bold tracking-tight text-ink">My attendance</h1><p className="mt-1 text-xs text-slate-400">Record today’s check-in and review your work history.</p>{profile?.employee_code && <p className="mt-2 inline-flex rounded-full bg-indigo-50 px-3 py-1.5 text-[10px] font-bold text-indigo-800">Employee ID · {profile.employee_code}</p>}</div><AttendanceControls onDone={loadAttendance} attendance={todayRecords} /></div>
     <AttendancePeriodFilters value={period} onChange={setPeriod} />
     {error && <ErrorBanner message={error} retry={loadAttendance} />}
     <div className="grid gap-3 sm:grid-cols-4"><MiniMetric title="Days in period" value={summary.total_days} color="violet" /><MiniMetric title="Present days" value={summary.present_days} color="green" /><MiniMetric title="Absent days" value={summary.absent_days} color="amber" /><MiniMetric title="Hours worked" value={summary.hours_worked} color="blue" /></div>
-    <RecordTable title="Attendance history" rows={records} loading={loading} error="" search={search} onSearch={setSearch} columns={[
+    <RecordTable title="My attendance history" rows={records} loading={loading} error="" search={search} onSearch={setSearch} columns={[
+      { label: "Employee ID", render: (row) => row.employee_code || "—" },
+      { label: "Employee", render: (row) => row.employee_name || "—" },
       { label: "Date", render: (row) => dateLabel(row.work_date) },
       { label: "Check in", render: (row) => dateTimeLabel(row.check_in) },
       { label: "Check out", render: (row) => dateTimeLabel(row.check_out) },

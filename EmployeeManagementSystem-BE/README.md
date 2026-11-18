@@ -1,6 +1,6 @@
 # Employee Management System API
 
-REST API built with Express and PostgreSQL. The API has three role-based access levels (`admin`, `hr`, `employee`): one system admin, multiple HR accounts, and employee accounts. HR handles daily employee, department, attendance, leave, payroll, document, announcement, and holiday operations. An employee created in the `HR` or `Human Resources` department receives an HR login and setup invitation. Admin manages user access, can view/add/delete employees and departments, and can send announcements to selected HR accounts.
+REST API built with Express and PostgreSQL. The three application roles are one protected System Admin, HR, and employees. HR handles employee, department, attendance, leave, payroll, document, announcement, and holiday operations; employees can view only their own payslips. Admin manages user access and organization structure, publishes announcements to HR, and has read-only oversight of all service requests. HR and employees can submit service requests. All requests enter one shared employee queue, where any employee can take and process them. HR and Admin can view the full queue but cannot change request status. IT, Support, and Maintenance identify the request type and do not create separate queues or dashboards.
 
 Employee profiles reference departments through `department_id`; the migration
 backfills this link from existing department names. Payroll, attendance, leave,
@@ -45,9 +45,9 @@ SMTP_TLS_CA_FILE=
 COMPANY_NAME=Employee Management System
 ```
 
-The platform provides separate Admin, HR, Employee, IT, Support, and Maintenance roles. Admin can provision service-team accounts from User access. IT, Support, and Maintenance roles only see requests for their own service category; employees and HR can create requests and track their own.
+The platform application roles are System Admin, HR, and Employee. Admin can create an HR login from **Team access** without an employee profile. HR can then create their own employee profile with the HR login email; the profile is linked to the existing HR account and uses one Employee ID in both workspaces. HR can switch to the Employee workspace for personal attendance, payslips, and employment details. HR manages organization-wide people operations and payroll in the HR workspace. IT, Support, and Maintenance are departments. Service requests enter one shared Employee queue; HR and Admin have full view access, while employees take and process requests regardless of their department.
 
-Leave requests support annual, sick, casual, unpaid, parental, bereavement, and compensatory categories. Paid categories use the employee's shared paid-leave allowance; unpaid leave does not reduce that balance. Run `npm run migrate` after updating to add the service request queue and leave category fields.
+Employee leave applications are limited to Casual, Sick, and Unpaid Leave. Casual Leave has a 12-day yearly allocation by default and only approved Casual Leave reduces that balance. Sick Leave requires a PDF, JPG, PNG, or DOCX supporting document (up to 5 MB), stored in the `leave_documents` table; Sick Leave is tracked separately from the Casual Leave balance. Approved Unpaid Leave never reduces paid leave. Other historical leave categories remain in the database for existing records but cannot be selected for new employee requests. Run `npm run migrate` after updating to add the Casual Leave allocation and supporting-document table.
 
 For Render Free, use Resend's HTTPS API because Render blocks outbound SMTP ports on free web services. Set these backend environment variables in Render (do not commit the API key):
 
@@ -122,7 +122,7 @@ All routes are prefixed with `/api`.
 | Holidays (5) | `GET/POST /holidays`, `GET/PATCH/DELETE /holidays/:id` |
 | Service requests (4) | `GET /service-requests`, `GET /service-requests/summary`, `POST /service-requests`, `PATCH /service-requests/:id` |
 
-Service request routes are scoped by role and category. `GET /` and `GET /api/test-db` are two additional health endpoints.
+Service request listing is available to all three roles. HR and Employee accounts can submit requests; only Employee accounts can change request status. `GET /` and `GET /api/test-db` are two additional health endpoints.
 
 Employees can access their own attendance, leave, payroll, profile, and documents. Employee check-in and check-out can each be recorded once per workday; the API rejects duplicate punches. Admin and HR can view and manage organization-wide attendance and leave records; only admins can manage users and delete selected records.
 HR users with a linked employee profile can also check in/out directly from the HR Attendance page. Those self-service punches are restricted to the HR user's own linked profile. Employees and HR users can view their attendance by year, month, or specific date; days without either punch are displayed as absent, including weekends and holidays, starting from the employee's joining date.
@@ -138,15 +138,17 @@ can view their photo through `GET /api/profile/photo`. Profile photos must be JP
 PNG, or WebP images no larger than 5 MB and are stored in PostgreSQL. Aadhaar and PAN
 are intentionally not collected by this application.
 
-Admins can create role-based HR, IT, Support, and Maintenance logins from **User Access**. HR logins can be linked to an existing employee ID. This reuses the employee
-record without creating a duplicate ID or changing the employee's work email.
+Admins can assign HR application access from **Team access**. Payroll is included in HR permissions. Department membership and job title remain on the employee profile and do not create application roles.
 Create employee logins from **Employees** so each login is linked to its employee
-record; standalone employee accounts are rejected.
-Admins can also create a separate employee-portal login from **User Access** by
-choosing the employee role and linking an existing employee ID. For an HR profile, the employee login may use the same work email as the HR login, but it must use a different password so automatic sign-in can identify the intended workspace.
+record; standalone employee accounts are rejected. IT, Support, and Maintenance
+employees remain Employee-role accounts and use the Service Desk feature in the
+same dashboard. Their linked department scopes queue-management access.
 
-Each employee receives 12 paid-leave days per calendar year by default. Admin/HR
-can change the annual allowance in the employee form. Approved paid leave days use the employee's shared paid-leave allowance; unpaid leave does not reduce it. Unused days do not carry over. Approval is rejected if it would exceed the allowance.
+Each employee receives exactly 12 Casual Leave days per calendar year. Only approved Casual Leave
+uses this balance; Sick Leave requires a supporting document and is tracked
+separately, while approved Unpaid Leave does not reduce the Casual Leave balance.
+Unused Casual Leave does not carry over. Approval is rejected if it would
+exceed the employee's Casual Leave allocation.
 
 To activate an employee account, open the setup link in the invitation email, enter the one-time code, then create a password. Public self-registration is disabled. Setup codes are one-use and expire after 24 hours; five incorrect attempts
 invalidate a code.

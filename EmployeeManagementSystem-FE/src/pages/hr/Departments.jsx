@@ -129,7 +129,7 @@ export default function Departments({ user }) {
   return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div><p className="text-[11px] font-bold uppercase tracking-[.16em] text-brand">{user.role === "admin" ? "Admin platform" : "People operations"}</p><h1 className="mt-2 text-[27px] font-bold tracking-tight text-ink">Departments</h1><p className="mt-1 text-xs text-slate-400">Keep teams organized and see how your company is structured.</p></div>
+        <div><p className="text-[11px] font-bold uppercase tracking-[.16em] text-brand">{user.role === "admin" ? "Admin platform" : "People operations"}</p><h1 className="mt-2 text-[27px] font-bold tracking-tight text-ink">Departments</h1><p className="mt-1 text-xs text-slate-500">Create organizational teams here, then assign people to them from Employees. Departments organize the company; application roles set login permissions.</p></div>
         <button onClick={() => openForm()} className="rounded-xl bg-brand px-4 py-2.5 text-[11px] font-bold text-white"><Plus size={15} className="mr-1.5 inline" />Add department</button>
       </div>
       {notice && <p role="status" className="rounded-xl bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-700">{notice}</p>}

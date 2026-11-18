@@ -6,6 +6,7 @@ const router = express.Router();
 
 router.use(authenticate, allowRoles("hr", "employee"));
 router.get("/summary", controller.getPayrollSummary);
+router.get("/employees", allowRoles("hr"), controller.listPayrollEmployees);
 router.get("/employee/:employeeId", allowRoles("hr"), controller.getEmployeePayroll);
 router.get("/", controller.listPayroll);
 router.get("/:id/payslip", controller.getPayslip);

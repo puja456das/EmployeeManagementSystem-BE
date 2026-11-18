@@ -1,6 +1,30 @@
 const pool = require("../config/db");
+const path = require("path");
 const asyncHandler = require("../utils/asyncHandler");
 const { getEmployeeIdForUser } = require("../utils/employeeAccount");
+const employeeLeaveTypes = ["casual", "sick", "unpaid"];
+const leaveTypeLabel = { casual: "Casual", sick: "Sick", unpaid: "Unpaid" };
+
+const validateMedicalDocument = (file) => {
+    if (!file) return null;
+    const data = file.buffer;
+    const validSignature = file.mimetype === "application/pdf"
+        ? data.subarray(0, 5).toString("ascii") === "%PDF-"
+        : file.mimetype === "image/jpeg"
+            ? data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff
+            : file.mimetype === "image/png"
+                ? data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+                : file.mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    ? data[0] === 0x50 && data[1] === 0x4b
+                    : false;
+    if (!validSignature) {
+        const error = new Error("The medical document contents do not match the selected file type");
+        error.status = 400;
+        throw error;
+    }
+    const safeName = String(file.originalname || "medical-document").replace(/[\r\n\0]/g, "").replace(/\\/g, "/");
+    return path.basename(safeName).slice(0, 255) || "medical-document";
+};
 
 const isDateOnly = (value) => {
     if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -27,11 +51,11 @@ const leaveDayCount = (startDate, endDate) => {
 const getBalance = async (employeeId, year = new Date().getFullYear(), db = pool) => {
     const result = await db.query(
         `SELECT e.id AS employee_id, e.employee_code, e.name AS employee_name,
-                e.annual_paid_leave_days AS allocated_days,
+                e.casual_leave_days AS allocated_days,
                 COALESCE(SUM(
                     GREATEST(0, LEAST(l.end_date, make_date($2::int + 1, 1, 1) - 1)
                         - GREATEST(l.start_date, make_date($2::int, 1, 1)) + 1)
-                ) FILTER (WHERE l.status = 'approved' AND l.leave_type <> 'unpaid'), 0)::int AS approved_days_used
+                ) FILTER (WHERE l.status = 'approved' AND l.leave_type = 'casual'), 0)::int AS approved_days_used
          FROM employees e
          LEFT JOIN leaves l ON l.employee_id = e.id
              AND l.status = 'approved'
@@ -58,15 +82,19 @@ const getLeaves = asyncHandler(async (req, res) => {
     const result = req.user.role === "employee"
         ? await pool.query(
             `SELECT l.*, e.name AS employee_name, e.employee_code,
+                    ld.original_name AS medical_document_name,
                     (l.end_date - l.start_date + 1)::int AS requested_days
              FROM leaves l JOIN employees e ON e.id = l.employee_id
+             LEFT JOIN leave_documents ld ON ld.leave_id = l.id
              WHERE l.employee_id = $1 ORDER BY l.created_at DESC`,
             [employeeId]
         )
         : await pool.query(
             `SELECT l.*, e.name AS employee_name, e.employee_code,
+                    ld.original_name AS medical_document_name,
                     (l.end_date - l.start_date + 1)::int AS requested_days
              FROM leaves l JOIN employees e ON e.id = l.employee_id
+             LEFT JOIN leave_documents ld ON ld.leave_id = l.id
              ORDER BY l.created_at DESC`
         );
     res.json({ success: true, data: result.rows });
@@ -78,8 +106,9 @@ const getLeave = asyncHandler(async (req, res) => {
         return res.status(404).json({ success: false, message: "Employee account is not linked" });
     }
     const result = await pool.query(
-        `SELECT l.*, e.name AS employee_name FROM leaves l
+        `SELECT l.*, e.name AS employee_name, ld.original_name AS medical_document_name FROM leaves l
          JOIN employees e ON e.id = l.employee_id
+         LEFT JOIN leave_documents ld ON ld.leave_id = l.id
          WHERE l.id = $1 AND ($2::bigint IS NULL OR e.id = $2)`,
         [req.params.id, employeeId]
     );
@@ -99,40 +128,101 @@ const updateLeave = asyncHandler(async (req, res) => {
     if (Object.hasOwn(req.body, "end_date") && !isDateOnly(end_date)) {
         return res.status(400).json({ success: false, message: "Invalid end date" });
     }
-    if (leave_type !== undefined && !["annual", "sick", "casual", "unpaid", "parental", "bereavement", "compensatory"].includes(leave_type)) {
-        return res.status(400).json({ success: false, message: "Choose a valid leave type" });
-    }
+    const documentName = validateMedicalDocument(req.file);
     if (reason !== undefined && (typeof reason !== "string" || !reason.trim())) {
         return res.status(400).json({ success: false, message: "Reason cannot be empty" });
     }
     const fields = Object.keys(req.body).filter((field) => ["start_date", "end_date", "reason", "leave_type"].includes(field));
-    if (!fields.length) return res.status(400).json({ success: false, message: "No valid leave fields provided" });
-    const current = await pool.query(
-        `SELECT l.employee_id, l.start_date, l.end_date FROM leaves l
-         WHERE l.id = $1 AND l.status = 'pending'
-           AND ($2::bigint IS NULL OR l.employee_id = $2)`,
+    if (!fields.length && !req.file) return res.status(400).json({ success: false, message: "No valid leave fields provided" });
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+        const current = await client.query(
+            `SELECT l.employee_id, l.start_date, l.end_date, l.leave_type,
+                    EXISTS (SELECT 1 FROM leave_documents ld WHERE ld.leave_id = l.id) AS has_medical_document
+             FROM leaves l
+             WHERE l.id = $1 AND l.status = 'pending'
+               AND ($2::bigint IS NULL OR l.employee_id = $2)
+             FOR UPDATE`,
+            [req.params.id, employeeId]
+        );
+        if (!current.rowCount) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({ success: false, message: "Pending leave request not found" });
+        }
+        const existing = current.rows[0];
+        const nextLeaveType = leave_type || existing.leave_type;
+        if (leave_type !== undefined && leave_type !== existing.leave_type && !employeeLeaveTypes.includes(leave_type)) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({ success: false, message: `Employees can select only ${employeeLeaveTypes.map((type) => leaveTypeLabel[type]).join(", ")}` });
+        }
+        if (req.file && nextLeaveType !== "sick") {
+            await client.query("ROLLBACK");
+            return res.status(400).json({ success: false, message: "A supporting document can only be attached to a Sick Leave request" });
+        }
+        if (nextLeaveType === "sick" && !req.file && !existing.has_medical_document) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({ success: false, message: "Upload a supporting medical document for Sick Leave" });
+        }
+        const nextStartDate = req.body.start_date || existing.start_date;
+        const nextEndDate = req.body.end_date || existing.end_date;
+        if (new Date(nextEndDate) < new Date(nextStartDate)) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({ success: false, message: "End date cannot be before start date" });
+        }
+        const overlap = await findOverlappingLeave(client, existing.employee_id, nextStartDate, nextEndDate, req.params.id);
+        if (overlap.rowCount) {
+            await client.query("ROLLBACK");
+            return res.status(409).json({ success: false, message: "This request overlaps another pending or approved leave." });
+        }
+        const values = fields.map((field) => field === "reason" ? reason.trim() : req.body[field]);
+        const assignments = fields.map((field, index) => `${field} = $${index + 1}`).join(", ");
+        values.push(req.params.id, employeeId);
+        const result = fields.length
+            ? await client.query(
+                `UPDATE leaves SET ${assignments}
+                 WHERE id = $${fields.length + 1} AND status = 'pending'
+                   AND ($${fields.length + 2}::bigint IS NULL OR employee_id = $${fields.length + 2})
+                 RETURNING *`,
+                values
+            )
+            : await client.query("SELECT * FROM leaves WHERE id = $1", [req.params.id]);
+        if (req.file) {
+            await client.query(
+                `INSERT INTO leave_documents (leave_id, original_name, mime_type, file_size, file_data)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (leave_id) DO UPDATE SET original_name = EXCLUDED.original_name,
+                     mime_type = EXCLUDED.mime_type, file_size = EXCLUDED.file_size,
+                     file_data = EXCLUDED.file_data, uploaded_at = NOW()`,
+                [req.params.id, documentName, req.file.mimetype, req.file.size, req.file.buffer]
+            );
+        } else if (nextLeaveType !== "sick") {
+            await client.query("DELETE FROM leave_documents WHERE leave_id = $1", [req.params.id]);
+        }
+        await client.query("COMMIT");
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+    } finally {
+        client.release();
+    }
+});
+
+const downloadMedicalDocument = asyncHandler(async (req, res) => {
+    const employeeId = req.user.role === "employee" ? await getEmployeeIdForUser(req.user.id) : null;
+    if (req.user.role === "employee" && !employeeId) {
+        return res.status(404).json({ success: false, message: "Employee account is not linked" });
+    }
+    const result = await pool.query(
+        `SELECT ld.original_name, ld.mime_type, ld.file_data
+         FROM leave_documents ld JOIN leaves l ON l.id = ld.leave_id
+         WHERE l.id = $1 AND ($2::bigint IS NULL OR l.employee_id = $2)`,
         [req.params.id, employeeId]
     );
-    if (!current.rowCount) return res.status(404).json({ success: false, message: "Pending leave request not found" });
-    const nextStartDate = req.body.start_date || current.rows[0].start_date;
-    const nextEndDate = req.body.end_date || current.rows[0].end_date;
-    if (new Date(nextEndDate) < new Date(nextStartDate)) {
-        return res.status(400).json({ success: false, message: "End date cannot be before start date" });
-    }
-    const overlap = await findOverlappingLeave(pool, current.rows[0].employee_id, nextStartDate, nextEndDate, req.params.id);
-    if (overlap.rowCount) return res.status(409).json({ success: false, message: "This request overlaps another pending or approved leave." });
-    const values = fields.map((field) => field === "reason" ? reason.trim() : req.body[field]);
-    const assignments = fields.map((field, index) => `${field} = $${index + 1}`).join(", ");
-    values.push(req.params.id, employeeId);
-    const result = await pool.query(
-        `UPDATE leaves SET ${assignments}
-         WHERE id = $${fields.length + 1} AND status = 'pending'
-           AND ($${fields.length + 2}::bigint IS NULL OR employee_id = $${fields.length + 2})
-         RETURNING *`,
-        values
-    );
-    if (!result.rowCount) return res.status(404).json({ success: false, message: "Pending leave request not found" });
-    res.json({ success: true, data: result.rows[0] });
+    if (!result.rowCount) return res.status(404).json({ success: false, message: "Medical document not found" });
+    res.set("Cache-Control", "private, no-store");
+    res.type(result.rows[0].mime_type).attachment(result.rows[0].original_name).send(result.rows[0].file_data);
 });
 
 const cancelLeave = asyncHandler(async (req, res) => {
@@ -173,11 +263,19 @@ const requestLeave = asyncHandler(async (req, res) => {
         return res.status(403).json({ success: false, message: "Employees must submit their own leave requests." });
     }
     const { start_date, end_date, reason, leave_type } = req.body;
+    const normalizedLeaveType = String(leave_type || "casual").toLowerCase();
+    const documentName = validateMedicalDocument(req.file);
     if (!start_date || !end_date || !reason?.trim()) {
         return res.status(400).json({ success: false, message: "Start date, end date, and reason are required" });
     }
-    if (!["annual", "sick", "casual", "unpaid", "parental", "bereavement", "compensatory"].includes(leave_type || "annual")) {
-        return res.status(400).json({ success: false, message: "Choose a valid leave type" });
+    if (!employeeLeaveTypes.includes(normalizedLeaveType)) {
+        return res.status(400).json({ success: false, message: `Choose Casual, Sick, or Unpaid Leave` });
+    }
+    if (normalizedLeaveType === "sick" && !req.file) {
+        return res.status(400).json({ success: false, message: "Upload a supporting medical document for Sick Leave" });
+    }
+    if (normalizedLeaveType !== "sick" && req.file) {
+        return res.status(400).json({ success: false, message: "A supporting document can only be attached to a Sick Leave request" });
     }
     if (!isDateOnly(start_date) || !isDateOnly(end_date) || end_date < start_date) {
         return res.status(400).json({ success: false, message: "Provide valid dates and ensure end date is not before start date" });
@@ -207,10 +305,17 @@ const requestLeave = asyncHandler(async (req, res) => {
         const result = await client.query(
             `INSERT INTO leaves (employee_id, start_date, end_date, reason, leave_type)
              VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [employeeId, start_date, end_date, reason.trim(), leave_type || "annual"]
+            [employeeId, start_date, end_date, reason.trim(), normalizedLeaveType]
         );
+        if (req.file) {
+            await client.query(
+                `INSERT INTO leave_documents (leave_id, original_name, mime_type, file_size, file_data)
+                 VALUES ($1, $2, $3, $4, $5)`,
+                [result.rows[0].id, documentName, req.file.mimetype, req.file.size, req.file.buffer]
+            );
+        }
         await client.query("COMMIT");
-        res.status(201).json({ success: true, data: result.rows[0] });
+        res.status(201).json({ success: true, data: { ...result.rows[0], medical_document_name: documentName } });
     } catch (error) {
         await client.query("ROLLBACK");
         throw error;
@@ -228,7 +333,7 @@ const reviewLeave = asyncHandler(async (req, res) => {
     try {
         await client.query("BEGIN");
         const request = await client.query(
-            `SELECT l.*, e.annual_paid_leave_days
+            `SELECT l.*, e.casual_leave_days
              FROM leaves l JOIN employees e ON e.id = l.employee_id
              WHERE l.id = $1 AND l.status = 'pending'
              FOR UPDATE OF l, e`,
@@ -251,13 +356,13 @@ const reviewLeave = asyncHandler(async (req, res) => {
                 return res.status(409).json({ success: false, message: "Cannot approve: this leave overlaps an already approved request." });
             }
         }
-        if (status === "approved" && leave.leave_type !== "unpaid") {
+        if (status === "approved" && leave.leave_type === "casual") {
             const dateKey = (value) => value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
             const leaveStart = dateKey(leave.start_date);
             const leaveEnd = dateKey(leave.end_date);
             const startYear = new Date(`${leaveStart}T00:00:00Z`).getUTCFullYear();
             const endYear = new Date(`${leaveEnd}T00:00:00Z`).getUTCFullYear();
-            const allowance = Number(leave.annual_paid_leave_days);
+            const allowance = Number(leave.casual_leave_days);
             for (let year = startYear; year <= endYear; year += 1) {
                 const yearStart = `${year}-01-01`;
                 const yearEnd = `${year}-12-31`;
@@ -318,6 +423,7 @@ module.exports = {
     getMyLeaveBalance,
     getLeaveBalances,
     requestLeave,
+    downloadMedicalDocument,
     reviewLeave,
     deleteLeave
 };
